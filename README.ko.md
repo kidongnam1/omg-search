@@ -1,6 +1,6 @@
 # Master of Knowledge
 
-옵시디언 볼트를 Gemini File Search와 Agent 기반 지식 작업실로 바꿔주는 플러그인입니다. 내 노트에 질문하고, 답변에 사용된 소스 노트를 확인하고, Antigravity/AGY 작업을 옵시디언 안에서 실행한 뒤 결과를 다시 노트로 적용할 수 있습니다.
+옵시디언 볼트를 Gemini File Search와 Agent 기반 지식 작업실로 바꿔주는 플러그인입니다. 내 노트에 질문하고, 답변에 사용된 소스 노트를 확인하고, Antigravity/AGY 작업을 옵시디언 안에서 실행한 뒤 결과를 다시 노트로 적용할 수 있습니다. [obsidian-wiki](https://github.com/Ar9av/obsidian-wiki)를 통합하여 출처 추적, 신뢰도 관리, GraphRAG 쿼리 기반의 지식 컴파일 기능도 지원합니다.
 
 ## 주요 기능
 
@@ -24,6 +24,14 @@
 - Agent 탭에서 Antigravity/AGY 작업 실행
 - 현재 볼트 경로, 선택한 sync 폴더, Agent 출력 폴더, 웹 검색 설정, Obsidian writing skill 정보를 Agent 프롬프트에 전달
 - Agent 결과도 Chat과 동일하게 Apply, Copy, Create Note, Select Note, Save 액션 사용
+
+### Wiki 통합 (obsidian-wiki)
+- [obsidian-wiki](https://github.com/Ar9av/obsidian-wiki) 통합으로 지식 컴파일 관리
+- **Wiki 탭**: GraphRAG 기반 위키 쿼리, 헬스체크, 볼트 상태 확인
+- **Agent 컨텍스트**: 활성화 시 위키 지식이 자동으로 Agent 프롬프트에 주입
+- **출처 추적**: 모든 지식에 `extracted`, `^[inferred]`, `^[ambiguous]` 태그
+- **볼트 헬스체크**: 깨진 링크, 고아 페이지, 모순, 중복 등 13개 검사
+- **단계별 쓰기**: LLM 생성 페이지를 `_staging/`에서 검토 후 병합
 
 ### Budget Guard
 - 월간 Gemini API 예산 설정
@@ -83,6 +91,11 @@ Agent:
 | Workspace Folder | 로그, 그래프, 작업 파일 저장 폴더 | `_omg` |
 | Agent Output Folder | Agent가 생성한 노트 저장 폴더 | `_omg/agent` |
 | Monthly Budget | 월간 Gemini API 예산 표시용 값 | `7` |
+| Wiki Enabled | obsidian-wiki 통합 활성화 (Wiki 탭 추가) | 꺼짐 |
+| Wiki CLI Path | `obsidian-wiki` 명령어 경로 | `obsidian-wiki` |
+| Wiki Vault Path | 위키 볼트 경로 (비워두면 현재 볼트) | 현재 볼트 |
+| Staged Writes | 위키 인제스트를 `_staging/`에서 검토 후 병합 | 꺼짐 |
+| Auto Lint | 인제스트/동기화 후 위키 린트 자동 실행 | 꺼짐 |
 | Auto Sync | 파일 변경 시 자동 동기화 | 켜짐 |
 | Sync Debounce | 변경 후 동기화 대기 시간 | `3000` |
 

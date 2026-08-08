@@ -27,7 +27,7 @@ __export(main_exports, {
   default: () => GeminiSyncPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // src/settings.ts
 var import_obsidian = require("obsidian");
@@ -54,7 +54,13 @@ var DEFAULT_SETTINGS = {
   syncDebounceMs: 3e3,
   files: {},
   // Apply to Note settings
-  includeMetadata: true
+  includeMetadata: true,
+  // Wiki (obsidian-wiki) settings
+  wikiEnabled: false,
+  wikiCliPath: "obsidian-wiki",
+  wikiVaultPath: "",
+  wikiAutoLint: false,
+  wikiStagedWrites: false
 };
 var GeminiSyncSettingTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
@@ -227,7 +233,8 @@ var GeminiSyncSettingTab = class extends import_obsidian.PluginSettingTab {
     );
     new import_obsidian.Setting(containerEl).setName("Find Antigravity CLI").setDesc("Auto-detect agy from PATH and common macOS/Windows install locations.").addButton(
       (button) => button.setButtonText("Auto-detect").onClick(async () => {
-        const found = this.plugin.agentService.detectAgentCliPath();
+        var _a;
+        const found = (_a = this.plugin.agentService) == null ? void 0 : _a.detectAgentCliPath();
         if (!found) {
           new import_obsidian.Notice("Could not find agy. Install Antigravity CLI or set the full path manually.");
           return;
@@ -349,6 +356,75 @@ var GeminiSyncSettingTab = class extends import_obsidian.PluginSettingTab {
       (toggle) => toggle.setValue(this.plugin.settings.includeMetadata).onChange(async (value) => {
         this.plugin.settings.includeMetadata = value;
         await this.plugin.saveSettings();
+      })
+    );
+    containerEl.createEl("h2", { text: "Wiki (obsidian-wiki)" });
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "Integrate obsidian-wiki to compile knowledge into interconnected pages with provenance, confidence, and typed relationships."
+    });
+    new import_obsidian.Setting(containerEl).setName("Enable Wiki Integration").setDesc("Adds a Wiki tab to the dashboard with query, lint, ingest, and status features.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.wikiEnabled).onChange(async (value) => {
+        this.plugin.settings.wikiEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Wiki CLI Path").setDesc("Path to the obsidian-wiki command. Install with: pip install obsidian-wiki").addText(
+      (text) => text.setPlaceholder("obsidian-wiki").setValue(this.plugin.settings.wikiCliPath).onChange(async (value) => {
+        this.plugin.settings.wikiCliPath = value.trim() || "obsidian-wiki";
+        await this.plugin.saveSettings();
+      })
+    ).addButton(
+      (button) => button.setButtonText("Auto-detect").onClick(async () => {
+        var _a;
+        const found = (_a = this.plugin.wikiService) == null ? void 0 : _a.resolveCliPath();
+        if (!found) {
+          new import_obsidian.Notice("obsidian-wiki not found. Install with: pip install obsidian-wiki");
+          return;
+        }
+        this.plugin.settings.wikiCliPath = found;
+        await this.plugin.saveSettings();
+        new import_obsidian.Notice(`Found: ${found}`);
+        this.display();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Wiki Vault Path").setDesc("Path to the obsidian-wiki vault. Leave empty to use the current Obsidian vault.").addText(
+      (text) => text.setPlaceholder("(current vault)").setValue(this.plugin.settings.wikiVaultPath).onChange(async (value) => {
+        this.plugin.settings.wikiVaultPath = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Staged Writes").setDesc("When enabled, wiki ingests go to _staging/ for human review before merging into the vault.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.wikiStagedWrites).onChange(async (value) => {
+        this.plugin.settings.wikiStagedWrites = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Auto Lint").setDesc("Automatically run wiki lint checks after ingest or sync operations.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.wikiAutoLint).onChange(async (value) => {
+        this.plugin.settings.wikiAutoLint = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Initialize Wiki Vault").setDesc("Run obsidian-wiki setup to create the vault structure (index.md, categories, manifest).").addButton(
+      (button) => button.setButtonText("Setup Wiki").onClick(async () => {
+        var _a;
+        button.setButtonText("Setting up...");
+        button.setDisabled(true);
+        try {
+          const result = await ((_a = this.plugin.wikiService) == null ? void 0 : _a.runSetup());
+          if (!result) {
+            new import_obsidian.Notice("Wiki service not available on mobile");
+            return;
+          }
+          new import_obsidian.Notice(result.ok ? result.output || "Wiki initialized" : result.error || "Setup failed");
+        } catch (error) {
+          new import_obsidian.Notice("Wiki setup failed. Check console for details.");
+          console.error("Wiki setup error:", error);
+        } finally {
+          button.setButtonText("Setup Wiki");
+          button.setDisabled(false);
+        }
       })
     );
     containerEl.createEl("h2", { text: "Help" });
@@ -3262,6 +3338,9 @@ var ChatView = class extends import_obsidian4.ItemView {
     this.welcomeEl = null;
     this.activeTab = "chat";
     this.citationPreviewEl = null;
+    this.wikiQueryMessages = [];
+    this.wikiStatusCache = null;
+    this.wikiCollapsedSections = /* @__PURE__ */ new Set(["maintain", "sessions", "trust", "export", "manifest", "special-files"]);
     this.plugin = plugin;
   }
   getViewType() {
@@ -3326,6 +3405,7 @@ var ChatView = class extends import_obsidian4.ItemView {
     const tabs = [
       { id: "chat", label: "Chat" },
       { id: "agent", label: "Agent" },
+      ...this.plugin.settings.wikiEnabled ? [{ id: "wiki", label: "Wiki" }] : [],
       { id: "budget", label: "Budget" },
       { id: "workspace", label: "_omg" },
       { id: "graph", label: "Graph" },
@@ -3346,6 +3426,14 @@ var ChatView = class extends import_obsidian4.ItemView {
   renderActiveTab() {
     this.dashboardContentEl.empty();
     this.welcomeEl = null;
+    if (this.activeTab === "wiki") {
+      if (!import_obsidian4.Platform.isDesktopApp) {
+        this.renderMobileUnavailable("Wiki", "Wiki features require the obsidian-wiki CLI, which is only available on desktop.");
+        return;
+      }
+      this.renderWikiTab();
+      return;
+    }
     if (this.activeTab === "budget") {
       this.renderBudgetTab();
       return;
@@ -3360,6 +3448,10 @@ var ChatView = class extends import_obsidian4.ItemView {
     }
     if (this.activeTab === "settings") {
       this.renderSettingsTab();
+      return;
+    }
+    if (this.activeTab === "agent" && !import_obsidian4.Platform.isDesktopApp) {
+      this.renderMobileUnavailable("Agent", "Agent features require a CLI tool, which is only available on desktop.");
       return;
     }
     this.renderConversationToolbar();
@@ -3441,6 +3533,524 @@ var ChatView = class extends import_obsidian4.ItemView {
       newButton.setAttr("title", "Stop the current run before starting a new conversation.");
     }
     newButton.addEventListener("click", () => this.startNewConversation());
+  }
+  switchTab(tab) {
+    if (["chat", "agent", "wiki", "budget", "workspace", "graph", "settings"].includes(tab)) {
+      this.activeTab = tab;
+      this.renderTabs();
+      this.renderActiveTab();
+    }
+  }
+  createWikiSection(parent, id, title, defaultOpen = false) {
+    const section = parent.createDiv({ cls: "mok-wiki-section" });
+    const isCollapsed = defaultOpen ? false : this.wikiCollapsedSections.has(id);
+    const header = section.createDiv({ cls: `mok-wiki-section-header ${isCollapsed ? "" : "mok-wiki-section-open"}` });
+    header.createEl("span", { cls: "mok-wiki-section-arrow", text: isCollapsed ? "\u25B8" : "\u25BE" });
+    header.createEl("span", { text: title });
+    const content = section.createDiv({ cls: "mok-wiki-section-body" });
+    if (isCollapsed)
+      content.style.display = "none";
+    header.addEventListener("click", () => {
+      const nowCollapsed = content.style.display === "none";
+      content.style.display = nowCollapsed ? "" : "none";
+      header.toggleClass("mok-wiki-section-open", nowCollapsed);
+      const arrow = header.querySelector(".mok-wiki-section-arrow");
+      if (arrow)
+        arrow.textContent = nowCollapsed ? "\u25BE" : "\u25B8";
+      if (nowCollapsed)
+        this.wikiCollapsedSections.delete(id);
+      else
+        this.wikiCollapsedSections.add(id);
+    });
+    return { header, content };
+  }
+  renderMobileUnavailable(tabName, detail) {
+    const panel = this.dashboardContentEl.createDiv({ cls: "mok-panel" });
+    panel.createEl("h3", { text: `${tabName} \u2014 Desktop Only` });
+    panel.createEl("p", { text: detail });
+    panel.createEl("p", { text: "Use the Chat tab to search your synced notes and create reports from mobile." });
+  }
+  renderWikiTab() {
+    const panel = this.dashboardContentEl.createDiv({ cls: "mok-panel mok-wiki-panel" });
+    const statusSection = panel.createDiv({ cls: "mok-wiki-status" });
+    statusSection.createEl("h3", { text: "Wiki Status" });
+    const statusContent = statusSection.createDiv({ cls: "mok-wiki-status-content" });
+    statusContent.createEl("p", { text: "Checking wiki status..." });
+    this.plugin.wikiService.checkInstallation().then((status) => {
+      statusContent.empty();
+      if (!status.installed) {
+        statusContent.createEl("p", { cls: "mok-wiki-error", text: status.error || "obsidian-wiki CLI not found" });
+        statusContent.createEl("p", { text: "Install: pip install obsidian-wiki" });
+        return;
+      }
+      const grid = statusContent.createDiv({ cls: "mok-wiki-status-grid" });
+      grid.createDiv({ text: `CLI: ${status.cliPath}` });
+      grid.createDiv({ text: `Vault: ${status.vaultPath || "(current)"}` });
+      grid.createDiv({ text: `Pages: ${status.pageCount}` });
+      grid.createDiv({ text: `Categories: ${status.categories.join(", ") || "none"}` });
+      grid.createDiv({ text: `index.md: ${status.hasIndex ? "yes" : "no"}` });
+      grid.createDiv({ text: `.manifest.json: ${status.hasManifest ? "yes" : "no"}` });
+      if (status.hasLog)
+        grid.createDiv({ text: "log.md: yes" });
+      if (status.hasHot)
+        grid.createDiv({ text: "hot.md: yes" });
+      if (status.hasTrustLedger)
+        grid.createDiv({ text: "trust-ledger: yes" });
+      if (status.stagingCount > 0)
+        grid.createDiv({ text: `Staged: ${status.stagingCount} files` });
+      if (!status.hasIndex && !status.hasManifest) {
+        const setupBtn = statusContent.createEl("button", {
+          cls: "gemini-chat-action-btn",
+          text: "Initialize Wiki Vault"
+        });
+        setupBtn.addEventListener("click", async () => {
+          setupBtn.setText("Setting up...");
+          setupBtn.setAttr("disabled", "true");
+          const result = await this.plugin.wikiService.runSetup();
+          new import_obsidian4.Notice(result.output || result.error || "Setup complete");
+          setupBtn.removeAttribute("disabled");
+          setupBtn.setText("Initialize Wiki Vault");
+          this.renderActiveTab();
+        });
+      }
+      this.wikiStatusCache = status;
+    });
+    this.renderWikiQuerySection(panel);
+    this.renderWikiLintSection(panel);
+    if (this.plugin.settings.wikiStagedWrites) {
+      this.renderWikiStagingSection(panel);
+    }
+    this.renderWikiMaintainSection(panel);
+    this.renderWikiSessionsSection(panel);
+    this.renderWikiTrustSection(panel);
+    this.renderWikiExportSection(panel);
+    this.renderWikiManifestSection(panel);
+    this.renderWikiSpecialFilesSection(panel);
+  }
+  renderWikiQuerySection(panel) {
+    const { content: querySection } = this.createWikiSection(panel, "query", "Wiki Query", true);
+    querySection.createEl("p", { cls: "setting-item-description", text: "GraphRAG-backed tiered retrieval. Answers grounded in wiki pages with [[wikilink]] citations." });
+    const queryMessages = querySection.createDiv({ cls: "mok-wiki-query-messages" });
+    for (const msg of this.wikiQueryMessages) {
+      const msgEl = queryMessages.createDiv({ cls: `mok-wiki-msg mok-wiki-msg-${msg.role}` });
+      msgEl.createEl("strong", { text: msg.role === "user" ? "You" : "Wiki" });
+      const bodyEl = msgEl.createDiv({ cls: "mok-wiki-msg-body" });
+      this.renderWikiMessageContent(bodyEl, msg.content);
+    }
+    const inputRow = querySection.createDiv({ cls: "mok-wiki-input-row" });
+    const queryInput = inputRow.createEl("textarea", {
+      cls: "gemini-chat-input mok-wiki-query-input",
+      placeholder: "Ask your wiki..."
+    });
+    queryInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        const query = queryInput.value.trim();
+        if (!query)
+          return;
+        this.handleWikiQuery(query, queryInput, queryMessages);
+      }
+    });
+    const queryBtn = inputRow.createEl("button", {
+      cls: "gemini-chat-send-btn",
+      text: "\u27A4"
+    });
+    queryBtn.addEventListener("click", () => {
+      const query = queryInput.value.trim();
+      if (!query)
+        return;
+      this.handleWikiQuery(query, queryInput, queryMessages);
+    });
+  }
+  renderWikiLintSection(panel) {
+    const { content: lintSection } = this.createWikiSection(panel, "lint", "Health Check", true);
+    const lintResultEl = lintSection.createDiv({ cls: "mok-wiki-lint-results" });
+    const lintBtn = lintSection.createEl("button", {
+      cls: "gemini-chat-action-btn",
+      text: "Run Lint"
+    });
+    lintBtn.addEventListener("click", async () => {
+      lintBtn.setText("Checking...");
+      lintBtn.setAttr("disabled", "true");
+      lintResultEl.empty();
+      const result = await this.plugin.wikiService.runLint();
+      lintResultEl.empty();
+      if (result.error) {
+        lintResultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+      } else {
+        lintResultEl.createEl("p", { text: result.summary });
+        const list = lintResultEl.createEl("ul", { cls: "mok-wiki-lint-list" });
+        for (const check of result.checks) {
+          const icon = check.status === "pass" ? "\u2713" : check.status === "warn" ? "\u26A0" : "\u2717";
+          const cls = `mok-wiki-lint-${check.status}`;
+          const li = list.createEl("li", { cls, text: `${icon} ${check.message}` });
+          if (check.items && check.items.length > 0) {
+            const subList = li.createEl("ul");
+            for (const item of check.items.slice(0, 10)) {
+              subList.createEl("li", { text: item });
+            }
+            if (check.items.length > 10) {
+              subList.createEl("li", { text: `... +${check.items.length - 10} more` });
+            }
+          }
+        }
+      }
+      lintBtn.removeAttribute("disabled");
+      lintBtn.setText("Run Lint");
+    });
+  }
+  renderWikiStagingSection(panel) {
+    const { content: stagingSection } = this.createWikiSection(panel, "staging", "Staging Review", true);
+    stagingSection.createEl("p", { cls: "setting-item-description", text: "LLM-generated pages waiting in _staging/ for human review before merging into the wiki." });
+    const stagingList = stagingSection.createDiv({ cls: "mok-wiki-staging-list" });
+    stagingList.createEl("p", { text: "Loading staged files..." });
+    this.plugin.wikiService.listStagedFiles().then((files) => {
+      stagingList.empty();
+      if (files.length === 0) {
+        stagingList.createEl("p", { cls: "mok-wiki-muted", text: "No staged files." });
+        return;
+      }
+      for (const file of files) {
+        const card = stagingList.createDiv({ cls: "mok-wiki-staging-card" });
+        card.createEl("div", { cls: "mok-wiki-staging-name", text: file.name });
+        const preview = file.content.replace(/---[\s\S]*?---/, "").trim().slice(0, 200);
+        if (preview) {
+          card.createEl("div", { cls: "mok-wiki-staging-preview", text: preview + (file.content.length > 200 ? "..." : "") });
+        }
+        const actions = card.createDiv({ cls: "mok-wiki-staging-actions" });
+        const viewBtn = actions.createEl("button", { cls: "gemini-chat-action-btn", text: "View" });
+        viewBtn.addEventListener("click", () => {
+          this.app.workspace.openLinkText(file.path, "", true);
+        });
+        const approveBtn = actions.createEl("button", { cls: "gemini-chat-action-btn mok-wiki-btn-approve", text: "Approve" });
+        approveBtn.addEventListener("click", async () => {
+          approveBtn.setText("Approving...");
+          approveBtn.setAttr("disabled", "true");
+          const result = await this.plugin.wikiService.approveStagedFile(file.path);
+          new import_obsidian4.Notice(result.ok ? result.output : result.error || "Approval failed");
+          this.renderActiveTab();
+        });
+        const rejectBtn = actions.createEl("button", { cls: "gemini-chat-action-btn mok-wiki-btn-reject", text: "Reject" });
+        rejectBtn.addEventListener("click", async () => {
+          rejectBtn.setText("Rejecting...");
+          rejectBtn.setAttr("disabled", "true");
+          const result = await this.plugin.wikiService.rejectStagedFile(file.path);
+          new import_obsidian4.Notice(result.ok ? result.output : result.error || "Rejection failed");
+          this.renderActiveTab();
+        });
+      }
+    });
+  }
+  renderWikiMaintainSection(panel) {
+    const { content: maintainSection } = this.createWikiSection(panel, "maintain", "Maintain");
+    maintainSection.createEl("p", { cls: "setting-item-description", text: "Wiki maintenance operations: cross-linking, deduplication, rebuild, and sync." });
+    const btnGrid = maintainSection.createDiv({ cls: "mok-wiki-btn-grid" });
+    const ops = [
+      { label: "Cross-linker", action: () => this.plugin.wikiService.runCrossLinker(), description: "Add missing [[wikilinks]] between related pages" },
+      { label: "Dedup", action: () => this.plugin.wikiService.runDedup(), description: "Find and consolidate duplicate pages" },
+      { label: "Rebuild", action: () => this.plugin.wikiService.runRebuild(), description: "Rebuild wiki index and manifest" },
+      { label: "Sync", action: () => this.plugin.wikiService.runSync(), description: "Sync wiki state with vault changes" }
+    ];
+    const resultEl = maintainSection.createDiv({ cls: "mok-wiki-result-output" });
+    for (const op of ops) {
+      const btn = btnGrid.createEl("button", { cls: "gemini-chat-action-btn", text: op.label });
+      btn.setAttr("title", op.description);
+      btn.addEventListener("click", async () => {
+        btn.setText(`${op.label}...`);
+        btn.setAttr("disabled", "true");
+        resultEl.empty();
+        const result = await op.action();
+        resultEl.empty();
+        if (result.error) {
+          resultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+        } else {
+          resultEl.createEl("pre", { cls: "mok-wiki-pre", text: result.output || "Done." });
+        }
+        btn.removeAttribute("disabled");
+        btn.setText(op.label);
+      });
+    }
+  }
+  renderWikiSessionsSection(panel) {
+    const { content: sessionsSection } = this.createWikiSection(panel, "sessions", "Sessions");
+    sessionsSection.createEl("p", { cls: "setting-item-description", text: "Build session brain from journal entries, query session memory, and view session clusters." });
+    const btnRow = sessionsSection.createDiv({ cls: "mok-wiki-btn-grid" });
+    const resultEl = sessionsSection.createDiv({ cls: "mok-wiki-result-output" });
+    const buildBtn = btnRow.createEl("button", { cls: "gemini-chat-action-btn", text: "Build Sessions" });
+    buildBtn.addEventListener("click", async () => {
+      buildBtn.setText("Building...");
+      buildBtn.setAttr("disabled", "true");
+      resultEl.empty();
+      const result = await this.plugin.wikiService.runSessionsBuild();
+      resultEl.empty();
+      if (result.error)
+        resultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+      else
+        resultEl.createEl("pre", { cls: "mok-wiki-pre", text: result.output || "Done." });
+      buildBtn.removeAttribute("disabled");
+      buildBtn.setText("Build Sessions");
+    });
+    const clustersBtn = btnRow.createEl("button", { cls: "gemini-chat-action-btn", text: "View Clusters" });
+    clustersBtn.addEventListener("click", async () => {
+      clustersBtn.setText("Loading...");
+      clustersBtn.setAttr("disabled", "true");
+      resultEl.empty();
+      const result = await this.plugin.wikiService.runSessionsClusters();
+      resultEl.empty();
+      if (result.error)
+        resultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+      else
+        resultEl.createEl("pre", { cls: "mok-wiki-pre", text: result.output || "No clusters found." });
+      clustersBtn.removeAttribute("disabled");
+      clustersBtn.setText("View Clusters");
+    });
+    const queryRow = sessionsSection.createDiv({ cls: "mok-wiki-input-row" });
+    const sessionInput = queryRow.createEl("input", {
+      cls: "mok-wiki-inline-input",
+      type: "text",
+      placeholder: "Query session memory..."
+    });
+    const sessionQueryBtn = queryRow.createEl("button", { cls: "gemini-chat-action-btn", text: "Query" });
+    sessionQueryBtn.addEventListener("click", async () => {
+      const query = sessionInput.value.trim();
+      if (!query)
+        return;
+      sessionQueryBtn.setText("Querying...");
+      sessionQueryBtn.setAttr("disabled", "true");
+      resultEl.empty();
+      const result = await this.plugin.wikiService.runSessionsQuery(query);
+      resultEl.empty();
+      if (result.error)
+        resultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+      else {
+        const bodyEl = resultEl.createDiv({ cls: "mok-wiki-msg-body" });
+        this.renderWikiMessageContent(bodyEl, result.output || "No results.");
+      }
+      sessionQueryBtn.removeAttribute("disabled");
+      sessionQueryBtn.setText("Query");
+    });
+    sessionInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        sessionQueryBtn.click();
+      }
+    });
+  }
+  renderWikiTrustSection(panel) {
+    const { content: trustSection } = this.createWikiSection(panel, "trust", "Trust Ledger");
+    trustSection.createEl("p", { cls: "setting-item-description", text: "Provenance tracking: every claim tagged extracted, ^[inferred], or ^[ambiguous]. Review trust status per page." });
+    const trustTable = trustSection.createDiv({ cls: "mok-wiki-trust-table" });
+    trustTable.createEl("p", { text: "Loading trust ledger..." });
+    this.plugin.wikiService.readTrustLedger().then((entries) => {
+      trustTable.empty();
+      if (entries.length === 0) {
+        trustTable.createEl("p", { cls: "mok-wiki-muted", text: "No trust entries yet. Run trust-check on wiki pages to populate." });
+        return;
+      }
+      const table = trustTable.createEl("table", { cls: "mok-wiki-table" });
+      const thead = table.createEl("thead");
+      const headerRow = thead.createEl("tr");
+      headerRow.createEl("th", { text: "Page" });
+      headerRow.createEl("th", { text: "Status" });
+      headerRow.createEl("th", { text: "Confidence" });
+      const tbody = table.createEl("tbody");
+      for (const entry of entries.slice(0, 50)) {
+        const row = tbody.createEl("tr");
+        const pageCell = row.createEl("td");
+        const pageLink = pageCell.createEl("a", { cls: "mok-wiki-source-link", text: entry.page });
+        pageLink.addEventListener("click", (e) => {
+          e.preventDefault();
+          this.app.workspace.openLinkText(entry.page, "", false);
+        });
+        const statusCls = entry.status === "trusted" ? "mok-wiki-lint-pass" : entry.status === "unverified" ? "mok-wiki-lint-warn" : "";
+        row.createEl("td", { cls: statusCls, text: entry.status });
+        row.createEl("td", { text: entry.confidence != null ? `${Math.round(entry.confidence * 100)}%` : "-" });
+      }
+      if (entries.length > 50) {
+        trustTable.createEl("p", { cls: "mok-wiki-muted", text: `Showing 50 of ${entries.length} entries.` });
+      }
+    });
+    const checkRow = trustSection.createDiv({ cls: "mok-wiki-input-row" });
+    const trustInput = checkRow.createEl("input", {
+      cls: "mok-wiki-inline-input",
+      type: "text",
+      placeholder: "Page name to trust-check..."
+    });
+    const resultEl = trustSection.createDiv({ cls: "mok-wiki-result-output" });
+    const trustCheckBtn = checkRow.createEl("button", { cls: "gemini-chat-action-btn", text: "Check" });
+    trustCheckBtn.addEventListener("click", async () => {
+      const page = trustInput.value.trim();
+      if (!page)
+        return;
+      trustCheckBtn.setText("Checking...");
+      trustCheckBtn.setAttr("disabled", "true");
+      resultEl.empty();
+      const result = await this.plugin.wikiService.runTrustCheck(page);
+      resultEl.empty();
+      if (result.error)
+        resultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+      else
+        resultEl.createEl("pre", { cls: "mok-wiki-pre", text: result.output || "Done." });
+      trustCheckBtn.removeAttribute("disabled");
+      trustCheckBtn.setText("Check");
+    });
+    trustInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        trustCheckBtn.click();
+      }
+    });
+    const trustRecordBtn = checkRow.createEl("button", { cls: "gemini-chat-action-btn", text: "Record" });
+    trustRecordBtn.addEventListener("click", async () => {
+      const page = trustInput.value.trim();
+      if (!page)
+        return;
+      trustRecordBtn.setText("Recording...");
+      trustRecordBtn.setAttr("disabled", "true");
+      resultEl.empty();
+      const result = await this.plugin.wikiService.runTrustRecord(page);
+      resultEl.empty();
+      if (result.error)
+        resultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+      else
+        resultEl.createEl("pre", { cls: "mok-wiki-pre", text: result.output || "Trust recorded." });
+      trustRecordBtn.removeAttribute("disabled");
+      trustRecordBtn.setText("Record");
+      this.renderActiveTab();
+    });
+  }
+  renderWikiExportSection(panel) {
+    const { content: exportSection } = this.createWikiSection(panel, "export", "Export");
+    exportSection.createEl("p", { cls: "setting-item-description", text: "Export wiki graph in various formats for analysis or visualization." });
+    const resultEl = exportSection.createDiv({ cls: "mok-wiki-result-output" });
+    const formats = [
+      { id: "json", label: "JSON" },
+      { id: "graphml", label: "GraphML" },
+      { id: "cypher", label: "Cypher" },
+      { id: "html", label: "HTML" }
+    ];
+    const btnRow = exportSection.createDiv({ cls: "mok-wiki-btn-grid" });
+    for (const fmt of formats) {
+      const btn = btnRow.createEl("button", { cls: "gemini-chat-action-btn", text: fmt.label });
+      btn.addEventListener("click", async () => {
+        btn.setText(`${fmt.label}...`);
+        btn.setAttr("disabled", "true");
+        resultEl.empty();
+        const result = await this.plugin.wikiService.runExport(fmt.id);
+        resultEl.empty();
+        if (result.error) {
+          resultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+        } else {
+          resultEl.createEl("pre", { cls: "mok-wiki-pre", text: result.output.slice(0, 2e3) || "Export complete." });
+          if (result.output.length > 2e3) {
+            resultEl.createEl("p", { cls: "mok-wiki-muted", text: `Output truncated (${result.output.length} chars total).` });
+          }
+        }
+        btn.removeAttribute("disabled");
+        btn.setText(fmt.label);
+      });
+    }
+  }
+  renderWikiManifestSection(panel) {
+    const { content: manifestSection } = this.createWikiSection(panel, "manifest", "Manifest");
+    manifestSection.createEl("p", { cls: "setting-item-description", text: ".manifest.json tracks page hashes for change detection and delta syncing." });
+    const manifestContent = manifestSection.createDiv({ cls: "mok-wiki-manifest-content" });
+    manifestContent.createEl("p", { text: "Loading manifest..." });
+    this.plugin.wikiService.readManifest().then((entries) => {
+      manifestContent.empty();
+      if (entries.length === 0) {
+        manifestContent.createEl("p", { cls: "mok-wiki-muted", text: "No manifest found. Run setup or sync first." });
+        return;
+      }
+      manifestContent.createEl("p", { cls: "mok-wiki-muted", text: `${entries.length} tracked pages` });
+      const table = manifestContent.createEl("table", { cls: "mok-wiki-table" });
+      const thead = table.createEl("thead");
+      const headerRow = thead.createEl("tr");
+      headerRow.createEl("th", { text: "Path" });
+      headerRow.createEl("th", { text: "Hash" });
+      const tbody = table.createEl("tbody");
+      for (const entry of entries.slice(0, 100)) {
+        const row = tbody.createEl("tr");
+        const pathCell = row.createEl("td");
+        const pathLink = pathCell.createEl("a", { cls: "mok-wiki-source-link", text: entry.path });
+        pathLink.addEventListener("click", (e) => {
+          e.preventDefault();
+          this.app.workspace.openLinkText(entry.path, "", false);
+        });
+        row.createEl("td", { cls: "mok-wiki-hash", text: entry.hash.slice(0, 12) + "..." });
+      }
+      if (entries.length > 100) {
+        manifestContent.createEl("p", { cls: "mok-wiki-muted", text: `Showing 100 of ${entries.length} entries.` });
+      }
+    });
+  }
+  renderWikiSpecialFilesSection(panel) {
+    const { content: specialSection } = this.createWikiSection(panel, "special-files", "Special Files");
+    specialSection.createEl("p", { cls: "setting-item-description", text: "Quick access to wiki index, activity log, and hot topics." });
+    const files = [
+      { name: "index.md", label: "Index", description: "Wiki table of contents" },
+      { name: "log.md", label: "Log", description: "Activity log of recent changes" },
+      { name: "hot.md", label: "Hot Topics", description: "Currently trending topics" },
+      { name: "_insights.md", label: "Insights", description: "Generated insights summary" }
+    ];
+    const resultEl = specialSection.createDiv({ cls: "mok-wiki-result-output" });
+    const btnRow = specialSection.createDiv({ cls: "mok-wiki-btn-grid" });
+    for (const file of files) {
+      const btn = btnRow.createEl("button", { cls: "gemini-chat-action-btn", text: file.label });
+      btn.setAttr("title", file.description);
+      btn.addEventListener("click", async () => {
+        const exists = this.app.vault.getAbstractFileByPath(file.name);
+        if (exists instanceof import_obsidian4.TFile) {
+          await this.app.workspace.openLinkText(file.name, "", true);
+        } else {
+          resultEl.empty();
+          const content = await this.plugin.wikiService.readSpecialFile(file.name);
+          if (content) {
+            const bodyEl = resultEl.createDiv({ cls: "mok-wiki-msg-body" });
+            this.renderWikiMessageContent(bodyEl, content.slice(0, 3e3));
+          } else {
+            resultEl.createEl("p", { cls: "mok-wiki-muted", text: `${file.name} not found.` });
+          }
+        }
+      });
+    }
+  }
+  renderWikiMessageContent(container, content) {
+    const processed = content.replace(/\[\[([^\]]+)\]\]/g, (match, title) => {
+      return `[${title}](obsidian://open?vault=${encodeURIComponent(this.app.vault.getName())}&file=${encodeURIComponent(title)})`;
+    });
+    import_obsidian4.MarkdownRenderer.renderMarkdown(processed, container, "", this);
+  }
+  async handleWikiQuery(query, inputEl, messagesEl) {
+    this.wikiQueryMessages.push({ role: "user", content: query });
+    inputEl.value = "";
+    const userMsgEl = messagesEl.createDiv({ cls: "mok-wiki-msg mok-wiki-msg-user" });
+    userMsgEl.createEl("strong", { text: "You" });
+    userMsgEl.createDiv({ cls: "mok-wiki-msg-body", text: query });
+    const loadingEl = messagesEl.createDiv({ cls: "mok-wiki-msg mok-wiki-msg-model" });
+    loadingEl.createEl("strong", { text: "Wiki" });
+    loadingEl.createDiv({ cls: "mok-wiki-msg-body", text: "Searching..." });
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    const result = await this.plugin.wikiService.runQuery(query);
+    loadingEl.remove();
+    const answer = result.error || result.answer || "No answer found.";
+    this.wikiQueryMessages.push({ role: "model", content: answer });
+    const modelMsgEl = messagesEl.createDiv({ cls: "mok-wiki-msg mok-wiki-msg-model" });
+    modelMsgEl.createEl("strong", { text: "Wiki" });
+    const bodyEl = modelMsgEl.createDiv({ cls: "mok-wiki-msg-body" });
+    this.renderWikiMessageContent(bodyEl, answer);
+    if (result.sources.length > 0) {
+      const sourcesEl = modelMsgEl.createDiv({ cls: "mok-wiki-sources" });
+      sourcesEl.createEl("small", { text: "Sources:" });
+      for (const src of result.sources) {
+        const srcLink = sourcesEl.createEl("a", { cls: "mok-wiki-source-link", text: src });
+        srcLink.addEventListener("click", (e) => {
+          e.preventDefault();
+          this.app.workspace.openLinkText(src, "", false);
+        });
+      }
+    }
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   }
   renderBudgetTab() {
     const panel = this.dashboardContentEl.createDiv({ cls: "mok-panel" });
@@ -4657,11 +5267,15 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
     }
   }
   stopAgentRun() {
-    const stopped = this.plugin.agentService.stop();
+    var _a;
+    const stopped = (_a = this.plugin.agentService) == null ? void 0 : _a.stop();
     new import_obsidian4.Notice(stopped ? "Agent run stopped." : "No active Agent run to stop.");
   }
   async runAgentMessage(text, onChunk) {
     var _a;
+    if (!this.plugin.agentService) {
+      return { role: "model", content: "Agent is only available on desktop." };
+    }
     const result = await this.plugin.agentService.run(text, onChunk);
     const contextLine = result.contextStats ? [
       `Knowledge context: ${result.contextStats.totalSyncedNotes} synced notes available; `,
@@ -5224,10 +5838,18 @@ ${content}`;
 
 // src/agent-service.ts
 var import_obsidian5 = require("obsidian");
-var import_child_process = require("child_process");
-var import_fs = require("fs");
-var import_os = require("os");
-var import_path = require("path");
+function requireDesktop() {
+  if (!import_obsidian5.Platform.isDesktopApp)
+    throw new Error("This feature requires Obsidian desktop.");
+  return {
+    spawn: require("child_process").spawn,
+    existsSync: require("fs").existsSync,
+    homedir: require("os").homedir,
+    delimiter: require("path").delimiter,
+    isAbsolute: require("path").isAbsolute,
+    join: require("path").join
+  };
+}
 var AgentService = class {
   constructor(plugin) {
     this.plugin = plugin;
@@ -5349,6 +5971,7 @@ ${message}`,
     const scope = this.plugin.settings.syncFolders.join(", ") || "No sync folders selected";
     const webSearch = this.plugin.settings.agentWebSearchEnabled;
     const obsidianSkill = await this.getObsidianSkillContext();
+    const wikiContext = await this.getWikiContext(prompt);
     const syncedNotes = await this.buildSyncedNotesContext(prompt);
     this.lastContextStats = syncedNotes.stats;
     let activeNoteContent = "";
@@ -5371,6 +5994,7 @@ ${message}`,
       "All generated files must stay inside the current Obsidian vault. Treat the Agent output folder as a vault-relative path, not an external filesystem destination.",
       "If you create a note file, save it inside the Agent output folder and include its vault-relative markdown link in the response. If you only draft text in chat, do not claim that a file was saved.",
       obsidianSkill,
+      wikiContext,
       `Selected knowledge folders: ${scope}.`,
       activeFile ? `Active note path: ${activeFile.path}.` : "No active note is open.",
       activeNoteContent ? `Active note content excerpt:
@@ -5410,6 +6034,25 @@ ${activeNoteContent}` : "",
         `--- ${path} ---`,
         content.length > 5e3 ? `${content.slice(0, 5e3)}
 ...[skill truncated]` : content
+      ].join("\n");
+    } catch (e) {
+      return "";
+    }
+  }
+  async getWikiContext(prompt) {
+    if (!this.plugin.settings.wikiEnabled || !this.plugin.wikiService)
+      return "";
+    try {
+      const contextPack = await this.plugin.wikiService.runContextPack(prompt, 6e3);
+      if (!contextPack)
+        return "";
+      return [
+        "obsidian-wiki knowledge context (compiled wiki pages relevant to this request):",
+        "--- wiki context ---",
+        contextPack.length > 6e3 ? `${contextPack.slice(0, 6e3)}
+...[wiki context truncated]` : contextPack,
+        "--- end wiki context ---",
+        "Use wiki citations ([[Page Name]]) when referencing wiki knowledge."
       ].join("\n");
     } catch (e) {
       return "";
@@ -5547,6 +6190,7 @@ ${content.slice(0, 4e3)}`.toLowerCase();
     return Array.from(tokens);
   }
   exec(command, args, logPath, onChunk) {
+    const { spawn } = requireDesktop();
     return new Promise((resolve, reject) => {
       var _a, _b, _c;
       let stdout = "";
@@ -5554,7 +6198,7 @@ ${content.slice(0, 4e3)}`.toLowerCase();
       let settled = false;
       const maxBuffer = 1024 * 1024 * 8;
       const timeoutMs = Math.max(3e4, this.plugin.settings.agentTimeoutSeconds * 1e3);
-      const child = (0, import_child_process.spawn)(command, args, {
+      const child = spawn(command, args, {
         cwd: this.plugin.getVaultPath(),
         env: {
           ...process.env,
@@ -5670,7 +6314,8 @@ ${content.slice(0, 4e3)}`.toLowerCase();
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const vaultPath = `${folder}/agent-${stamp}.jsonl`;
     const agyVaultPath = `${folder}/agent-${stamp}.agy.log`;
-    const agyAbsolutePath = (0, import_path.join)(this.plugin.getVaultPath(), agyVaultPath);
+    const { join } = requireDesktop();
+    const agyAbsolutePath = join(this.plugin.getVaultPath(), agyVaultPath);
     const initial = {
       event: "start",
       timestamp: new Date().toISOString(),
@@ -5726,16 +6371,17 @@ ${content.slice(0, 4e3)}`.toLowerCase();
     return this.resolveCommand("agy");
   }
   resolveCommand(command) {
-    if ((0, import_path.isAbsolute)(command) || command.includes("/") || command.includes("\\")) {
-      return (0, import_fs.existsSync)(command) ? command : null;
+    const { existsSync, homedir, delimiter, isAbsolute, join } = requireDesktop();
+    if (isAbsolute(command) || command.includes("/") || command.includes("\\")) {
+      return existsSync(command) ? command : null;
     }
     const paths = Array.from(new Set([
-      ...(process.env.PATH || "").split(import_path.delimiter),
-      (0, import_path.join)((0, import_os.homedir)(), ".local", "bin"),
-      (0, import_path.join)((0, import_os.homedir)(), ".antigravity", "antigravity", "bin"),
-      (0, import_path.join)((0, import_os.homedir)(), ".antigravity-ide", "antigravity-ide", "bin"),
-      (0, import_path.join)((0, import_os.homedir)(), ".antigravity", "bin"),
-      (0, import_path.join)((0, import_os.homedir)(), ".antigravity-ide", "bin"),
+      ...(process.env.PATH || "").split(delimiter),
+      join(homedir(), ".local", "bin"),
+      join(homedir(), ".antigravity", "antigravity", "bin"),
+      join(homedir(), ".antigravity-ide", "antigravity-ide", "bin"),
+      join(homedir(), ".antigravity", "bin"),
+      join(homedir(), ".antigravity-ide", "bin"),
       ...process.platform === "win32" ? this.getWindowsAgentSearchPaths() : [],
       "/opt/homebrew/bin",
       "/usr/local/bin",
@@ -5745,14 +6391,15 @@ ${content.slice(0, 4e3)}`.toLowerCase();
     const extensions = process.platform === "win32" ? Array.from(/* @__PURE__ */ new Set(["", ...(process.env.PATHEXT || ".EXE;.CMD;.BAT").split(";")])).map((ext) => ext.toLowerCase()) : [""];
     for (const dir of paths) {
       for (const ext of extensions) {
-        const candidate = (0, import_path.join)(dir, `${command}${ext}`);
-        if ((0, import_fs.existsSync)(candidate))
+        const candidate = join(dir, `${command}${ext}`);
+        if (existsSync(candidate))
           return candidate;
       }
     }
     return null;
   }
   getWindowsAgentSearchPaths() {
+    const { join } = requireDesktop();
     const env = process.env;
     const roots = [
       env.LOCALAPPDATA,
@@ -5774,29 +6421,524 @@ ${content.slice(0, 4e3)}`.toLowerCase();
     const paths = [];
     for (const root of roots) {
       for (const suffix of suffixes) {
-        paths.push((0, import_path.join)(root, ...suffix));
+        paths.push(join(root, ...suffix));
       }
     }
     return paths;
   }
   getMissingCommandMessage(command) {
+    const home = import_obsidian5.Platform.isDesktopApp ? requireDesktop().homedir() : "~";
     return [
       `Could not find the Agent CLI command "${command}".`,
       "If Obsidian was opened from Finder, Dock, or Start Menu, it may not inherit your shell PATH.",
       "Open Settings > Master of Knowledge > Agent Workspace and click Auto-detect, or set Antigravity CLI Path to the full command path.",
-      process.platform === "win32" ? "On Windows it is often agy.exe in PATH, %LOCALAPPDATA%\\Programs\\Antigravity, or %APPDATA%\\npm." : `On macOS it is often: ${(0, import_os.homedir)()}/.local/bin/agy`
+      process.platform === "win32" ? "On Windows it is often agy.exe in PATH, %LOCALAPPDATA%\\Programs\\Antigravity, or %APPDATA%\\npm." : `On macOS it is often: ${home}/.local/bin/agy`
     ].join("\n");
   }
 };
 
+// src/wiki-service.ts
+var import_obsidian6 = require("obsidian");
+function requireDesktop2() {
+  if (!import_obsidian6.Platform.isDesktopApp)
+    throw new Error("This feature requires Obsidian desktop.");
+  return {
+    spawn: require("child_process").spawn,
+    existsSync: require("fs").existsSync,
+    homedir: require("os").homedir,
+    delimiter: require("path").delimiter,
+    join: require("path").join
+  };
+}
+var WikiService = class {
+  constructor(plugin) {
+    this.plugin = plugin;
+    this.activeChild = null;
+  }
+  stop() {
+    if (!this.activeChild)
+      return false;
+    this.activeChild.kill();
+    this.activeChild = null;
+    return true;
+  }
+  resolveCliPath() {
+    var _a;
+    const { existsSync, homedir, delimiter, join } = requireDesktop2();
+    const configured = (_a = this.plugin.settings.wikiCliPath) == null ? void 0 : _a.trim();
+    if (configured && configured !== "obsidian-wiki") {
+      if (existsSync(configured))
+        return configured;
+    }
+    const candidates = [
+      join(homedir(), ".local", "bin", "obsidian-wiki"),
+      join(homedir(), ".cargo", "bin", "obsidian-wiki"),
+      "/usr/local/bin/obsidian-wiki",
+      "/opt/homebrew/bin/obsidian-wiki"
+    ];
+    if (process.platform === "win32") {
+      const localAppData = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
+      candidates.push(
+        join(localAppData, "Programs", "Python", "Scripts", "obsidian-wiki.exe"),
+        join(homedir(), "AppData", "Roaming", "Python", "Scripts", "obsidian-wiki.exe")
+      );
+    }
+    const pathDirs = (process.env.PATH || "").split(delimiter);
+    const exe = process.platform === "win32" ? "obsidian-wiki.exe" : "obsidian-wiki";
+    for (const dir of pathDirs) {
+      const full = join(dir, exe);
+      if (existsSync(full))
+        return full;
+    }
+    for (const c of candidates) {
+      if (existsSync(c))
+        return c;
+    }
+    return null;
+  }
+  getWikiVaultPath() {
+    if (this.plugin.settings.wikiVaultPath) {
+      return this.plugin.settings.wikiVaultPath;
+    }
+    return this.plugin.getVaultPath();
+  }
+  getEnv() {
+    const env = { OBSIDIAN_VAULT_PATH: this.getWikiVaultPath() };
+    if (this.plugin.settings.wikiStagedWrites) {
+      env.WIKI_STAGED_WRITES = "1";
+    }
+    return env;
+  }
+  requireCli() {
+    const cliPath = this.resolveCliPath();
+    if (!cliPath)
+      throw new Error("obsidian-wiki CLI not found. Install with: pip install obsidian-wiki");
+    return cliPath;
+  }
+  // ── Status & Setup ──────────────────────────────────────────────────
+  async checkInstallation() {
+    const cliPath = this.resolveCliPath();
+    const vaultPath = this.getWikiVaultPath();
+    const result = {
+      installed: false,
+      vaultConfigured: !!vaultPath,
+      vaultPath: vaultPath || "",
+      cliPath: cliPath || "",
+      pageCount: 0,
+      categories: [],
+      hasManifest: false,
+      hasIndex: false,
+      hasLog: false,
+      hasHot: false,
+      hasTrustLedger: false,
+      stagingCount: 0
+    };
+    if (!cliPath) {
+      result.error = "obsidian-wiki CLI not found. Install with: pip install obsidian-wiki";
+      return result;
+    }
+    result.installed = true;
+    try {
+      await this.exec(cliPath, ["doctor"], 1e4);
+    } catch (e) {
+      result.error = "obsidian-wiki doctor check failed";
+    }
+    if (vaultPath) {
+      const vault = this.plugin.app.vault;
+      result.hasManifest = !!vault.getAbstractFileByPath(".manifest.json");
+      result.hasIndex = !!vault.getAbstractFileByPath("index.md");
+      result.hasLog = !!vault.getAbstractFileByPath("log.md");
+      result.hasHot = !!vault.getAbstractFileByPath("hot.md");
+      result.hasTrustLedger = !!vault.getAbstractFileByPath("_meta/trust-ledger.json");
+      const staging = vault.getAbstractFileByPath("_staging");
+      if (staging && staging instanceof import_obsidian6.TFolder) {
+        result.stagingCount = staging.children.filter((f) => f instanceof import_obsidian6.TFile && f.extension === "md").length;
+      }
+      const categories = ["concepts", "entities", "skills", "references", "synthesis", "journal", "projects"];
+      result.categories = categories.filter((c) => !!vault.getAbstractFileByPath(c));
+      let count = 0;
+      for (const cat of result.categories) {
+        const folder = vault.getAbstractFileByPath(cat);
+        if (folder && folder instanceof import_obsidian6.TFolder) {
+          count += this.countMarkdownFiles(folder);
+        }
+      }
+      result.pageCount = count;
+    }
+    return result;
+  }
+  countMarkdownFiles(folder) {
+    let count = 0;
+    for (const child of folder.children) {
+      if (child instanceof import_obsidian6.TFile && child.extension === "md")
+        count++;
+      if (child instanceof import_obsidian6.TFolder)
+        count += this.countMarkdownFiles(child);
+    }
+    return count;
+  }
+  async runSetup() {
+    const cli = this.requireCli();
+    const vaultPath = this.getWikiVaultPath();
+    if (!vaultPath)
+      return { ok: false, output: "", error: "Wiki vault path not configured." };
+    try {
+      const out = await this.exec(cli, ["setup", "--vault", vaultPath], 3e4);
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  // ── Query ────────────────────────────────────────────────────────────
+  async runQuery(query) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, ["query", query], 3e4, this.getEnv());
+      const sources = [];
+      for (const line of out.stdout.split("\n")) {
+        const matches = line.match(/\[\[([^\]]+)\]\]/g);
+        if (matches)
+          sources.push(...matches.map((m) => m.replace(/^\[\[|\]\]$/g, "")));
+      }
+      return { answer: out.stdout.trim(), sources: [...new Set(sources)], error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { answer: "", sources: [], error: (e == null ? void 0 : e.message) || "Query failed" };
+    }
+  }
+  async runGraphQuery(query) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, ["graph-query", query], 2e4, this.getEnv());
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  async runContextPack(topic, budget = 8e3) {
+    const cli = this.resolveCliPath();
+    if (!cli)
+      return "";
+    try {
+      const out = await this.exec(cli, ["context-pack", "--budget", String(budget), "--json", topic], 15e3, this.getEnv());
+      return out.stdout.trim();
+    } catch (e) {
+      return "";
+    }
+  }
+  // ── Lint & Maintenance ──────────────────────────────────────────────
+  async runLint() {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, ["lint"], 3e4, this.getEnv());
+      const checks = this.parseLintOutput(out.stdout);
+      const failCount = checks.filter((c) => c.status === "fail").length;
+      const warnCount = checks.filter((c) => c.status === "warn").length;
+      const passCount = checks.filter((c) => c.status === "pass").length;
+      return {
+        ok: failCount === 0,
+        checks,
+        summary: `${passCount} passed, ${warnCount} warnings, ${failCount} failed`,
+        error: out.exitCode !== 0 ? out.stderr.trim() : void 0
+      };
+    } catch (e) {
+      return { ok: false, checks: [], summary: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  parseLintOutput(stdout) {
+    const checks = [];
+    let current = null;
+    for (const line of stdout.split("\n")) {
+      const pass = line.match(/^\s*(PASS|OK|✓)\s+(.+)/i);
+      const fail = line.match(/^\s*(FAIL|ERROR|✗|✘)\s+(.+)/i);
+      const warn = line.match(/^\s*(WARN|WARNING|⚠)\s+(.+)/i);
+      if (pass) {
+        current = { name: pass[2].trim(), status: "pass", message: pass[2].trim() };
+        checks.push(current);
+      } else if (fail) {
+        current = { name: fail[2].trim(), status: "fail", message: fail[2].trim(), items: [] };
+        checks.push(current);
+      } else if (warn) {
+        current = { name: warn[2].trim(), status: "warn", message: warn[2].trim(), items: [] };
+        checks.push(current);
+      } else if ((current == null ? void 0 : current.items) && line.trim().startsWith("-")) {
+        current.items.push(line.trim().slice(1).trim());
+      }
+    }
+    return checks;
+  }
+  async runCrossLinker() {
+    return this.runCliCommand(["lint", "--consolidate"], 6e4);
+  }
+  async runDedup() {
+    return this.runCliCommand(["lint", "--consolidate"], 6e4);
+  }
+  async runRebuild() {
+    return this.runCliCommand(["lint", "--consolidate"], 12e4);
+  }
+  async runSync() {
+    return this.runCliCommand(["sync"], 3e4);
+  }
+  // ── Ingest ──────────────────────────────────────────────────────────
+  async runCacheCheck(sourcePath) {
+    return this.runCliCommand(["cache-check", sourcePath], 15e3);
+  }
+  async runCacheUpdate(sourcePath) {
+    return this.runCliCommand(["cache-update", sourcePath], 15e3);
+  }
+  // ── Sessions ────────────────────────────────────────────────────────
+  async runSessionsBuild() {
+    return this.runCliCommand(["sessions-build"], 6e4);
+  }
+  async runSessionsQuery(query) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, ["sessions-query", query], 3e4, this.getEnv());
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  async runSessionsClusters() {
+    return this.runCliCommand(["sessions-clusters"], 3e4);
+  }
+  // ── Trust ───────────────────────────────────────────────────────────
+  async runTrustCheck(page) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, ["trust-check", page], 1e4, this.getEnv());
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  async runTrustRecord(page) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, ["trust-record", page], 1e4, this.getEnv());
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  async readTrustLedger() {
+    try {
+      const file = this.plugin.app.vault.getAbstractFileByPath("_meta/trust-ledger.json");
+      if (!(file instanceof import_obsidian6.TFile))
+        return [];
+      const text = await this.plugin.app.vault.read(file);
+      const data = JSON.parse(text);
+      if (Array.isArray(data))
+        return data;
+      if (data && typeof data === "object") {
+        return Object.entries(data).map(([page, entry]) => {
+          var _a, _b;
+          return {
+            page,
+            status: entry.status || entry.verdict || "unknown",
+            confidence: (_b = (_a = entry.confidence) != null ? _a : entry.score) != null ? _b : 0,
+            reviewer: entry.reviewer || entry.by || "",
+            timestamp: entry.timestamp || entry.date || ""
+          };
+        });
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+  // ── Staging ─────────────────────────────────────────────────────────
+  async listStagedFiles() {
+    const staging = this.plugin.app.vault.getAbstractFileByPath("_staging");
+    if (!staging || !(staging instanceof import_obsidian6.TFolder))
+      return [];
+    const files = [];
+    for (const child of staging.children) {
+      if (child instanceof import_obsidian6.TFile && child.extension === "md") {
+        try {
+          const content = await this.plugin.app.vault.read(child);
+          files.push({ path: child.path, name: child.basename, content });
+        } catch (e) {
+          files.push({ path: child.path, name: child.basename, content: "" });
+        }
+      }
+    }
+    return files;
+  }
+  async approveStagedFile(stagedPath) {
+    const file = this.plugin.app.vault.getAbstractFileByPath(stagedPath);
+    if (!(file instanceof import_obsidian6.TFile))
+      return { ok: false, output: "", error: `File not found: ${stagedPath}` };
+    try {
+      const content = await this.plugin.app.vault.read(file);
+      const targetName = file.basename;
+      let targetPath = "";
+      const categoryMatch = content.match(/^category:\s*(.+)/m);
+      const category = categoryMatch ? categoryMatch[1].trim() : "concepts";
+      targetPath = `${category}/${targetName}.md`;
+      const existing = this.plugin.app.vault.getAbstractFileByPath(targetPath);
+      if (existing instanceof import_obsidian6.TFile) {
+        await this.plugin.app.vault.modify(existing, content);
+      } else {
+        const folder = targetPath.split("/").slice(0, -1).join("/");
+        if (folder)
+          await this.plugin.ensureVaultFolder(folder);
+        await this.plugin.app.vault.create(targetPath, content);
+      }
+      await this.plugin.app.vault.delete(file);
+      return { ok: true, output: `Approved: ${stagedPath} \u2192 ${targetPath}` };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  async rejectStagedFile(stagedPath) {
+    const file = this.plugin.app.vault.getAbstractFileByPath(stagedPath);
+    if (!(file instanceof import_obsidian6.TFile))
+      return { ok: false, output: "", error: `File not found: ${stagedPath}` };
+    try {
+      await this.plugin.app.vault.delete(file);
+      return { ok: true, output: `Rejected and deleted: ${stagedPath}` };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  // ── Manifest ────────────────────────────────────────────────────────
+  async readManifest() {
+    try {
+      const file = this.plugin.app.vault.getAbstractFileByPath(".manifest.json");
+      if (!(file instanceof import_obsidian6.TFile))
+        return [];
+      const text = await this.plugin.app.vault.read(file);
+      const data = JSON.parse(text);
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        return Object.entries(data).filter(([key]) => key !== "last_commit_synced").map(([path, hash]) => ({ path, hash: String(hash) }));
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+  // ── Export ───────────────────────────────────────────────────────────
+  async runExport(format) {
+    const cli = this.requireCli();
+    try {
+      const args = ["graph-analyse"];
+      const out = await this.exec(cli, args, 3e4, this.getEnv());
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  // ── AST Extract ─────────────────────────────────────────────────────
+  async runAstExtract(filePath) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, ["ast-extract", filePath], 15e3, this.getEnv());
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  // ── Skills ──────────────────────────────────────────────────────────
+  async listSkills() {
+    const cli = this.resolveCliPath();
+    if (!cli)
+      return [];
+    try {
+      const out = await this.exec(cli, ["list"], 1e4);
+      return out.stdout.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#") && !l.startsWith("-"));
+    } catch (e) {
+      return [];
+    }
+  }
+  async getSkillInfo(skillName) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, ["info", skillName], 1e4);
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  // ── Read vault special files ────────────────────────────────────────
+  async readSpecialFile(name) {
+    try {
+      const file = this.plugin.app.vault.getAbstractFileByPath(name);
+      if (file instanceof import_obsidian6.TFile)
+        return await this.plugin.app.vault.read(file);
+    } catch (e) {
+    }
+    return "";
+  }
+  // ── Generic CLI runner ──────────────────────────────────────────────
+  async runCliCommand(args, timeout = 3e4) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, args, timeout, this.getEnv());
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  async runArbitrary(args, timeout = 3e4, onChunk) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, args, timeout, this.getEnv(), onChunk);
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  // ── Process execution ───────────────────────────────────────────────
+  async exec(command, args, timeout = 3e4, extraEnv, onChunk) {
+    const { spawn } = requireDesktop2();
+    return new Promise((resolve, reject) => {
+      const env = { ...process.env, ...extraEnv };
+      const child = spawn(command, args, {
+        env,
+        cwd: this.getWikiVaultPath() || void 0,
+        timeout,
+        windowsHide: true
+      });
+      this.activeChild = child;
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (data) => {
+        const chunk = data.toString();
+        stdout += chunk;
+        if (onChunk)
+          onChunk(chunk);
+      });
+      child.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+      child.on("close", (code) => {
+        this.activeChild = null;
+        resolve({ stdout, stderr, exitCode: code != null ? code : 1 });
+      });
+      child.on("error", (err) => {
+        this.activeChild = null;
+        reject(err);
+      });
+    });
+  }
+};
+
 // src/main.ts
-var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
+var GeminiSyncPlugin = class extends import_obsidian7.Plugin {
+  constructor() {
+    super(...arguments);
+    this.agentService = null;
+    this.wikiService = null;
+  }
   async onload() {
     console.log("Loading Master of Knowledge Plugin");
     await this.loadSettings();
     this.geminiService = new GeminiService(this);
     this.syncEngine = new SyncEngine(this, this.geminiService);
-    this.agentService = new AgentService(this);
+    if (import_obsidian7.Platform.isDesktopApp) {
+      this.agentService = new AgentService(this);
+      this.wikiService = new WikiService(this);
+    }
     await this.ensureDefaultWorkspaceFolders();
     await this.reconcileBudgetFromLog();
     this.registerView(
@@ -5822,12 +6964,97 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
       name: "Force Sync All Files",
       callback: async () => {
         if (!this.settings.apiKey) {
-          new import_obsidian6.Notice("Please configure your Gemini API key first");
+          new import_obsidian7.Notice("Please configure your Gemini API key first");
           return;
         }
         await this.syncEngine.fullSync();
       }
     });
+    this.addCommand({
+      id: "wiki-query",
+      name: "Wiki Query",
+      callback: () => {
+        this.activateChatView("wiki");
+      }
+    });
+    if (import_obsidian7.Platform.isDesktopApp) {
+      this.addCommand({
+        id: "wiki-lint",
+        name: "Wiki Lint",
+        callback: async () => {
+          if (!this.settings.wikiEnabled) {
+            new import_obsidian7.Notice("Enable Wiki integration in settings first");
+            return;
+          }
+          const result = await this.wikiService.runLint();
+          new import_obsidian7.Notice(result.ok ? `Wiki lint passed: ${result.summary}` : `Wiki lint: ${result.summary}`);
+        }
+      });
+      this.addCommand({
+        id: "wiki-setup",
+        name: "Wiki Setup",
+        callback: async () => {
+          if (!this.settings.wikiEnabled) {
+            new import_obsidian7.Notice("Enable Wiki integration in settings first");
+            return;
+          }
+          const result = await this.wikiService.runSetup();
+          new import_obsidian7.Notice(result.ok ? "Wiki vault initialized" : result.error || "Setup failed");
+        }
+      });
+      this.addCommand({
+        id: "wiki-sync",
+        name: "Wiki Sync",
+        callback: async () => {
+          if (!this.settings.wikiEnabled) {
+            new import_obsidian7.Notice("Enable Wiki integration in settings first");
+            return;
+          }
+          const result = await this.wikiService.runSync();
+          new import_obsidian7.Notice(result.ok ? "Wiki synced" : result.error || "Sync failed");
+        }
+      });
+      this.addCommand({
+        id: "wiki-cross-linker",
+        name: "Wiki Cross-linker",
+        callback: async () => {
+          if (!this.settings.wikiEnabled) {
+            new import_obsidian7.Notice("Enable Wiki integration in settings first");
+            return;
+          }
+          const result = await this.wikiService.runCrossLinker();
+          new import_obsidian7.Notice(result.ok ? "Cross-linking complete" : result.error || "Cross-linker failed");
+        }
+      });
+      this.addCommand({
+        id: "wiki-sessions-build",
+        name: "Wiki Sessions Build",
+        callback: async () => {
+          if (!this.settings.wikiEnabled) {
+            new import_obsidian7.Notice("Enable Wiki integration in settings first");
+            return;
+          }
+          const result = await this.wikiService.runSessionsBuild();
+          new import_obsidian7.Notice(result.ok ? "Session brain built" : result.error || "Sessions build failed");
+        }
+      });
+      this.addCommand({
+        id: "wiki-export",
+        name: "Wiki Graph Export",
+        callback: async () => {
+          if (!this.settings.wikiEnabled) {
+            new import_obsidian7.Notice("Enable Wiki integration in settings first");
+            return;
+          }
+          const result = await this.wikiService.runExport("json");
+          if (result.ok) {
+            new import_obsidian7.Notice("Wiki graph exported");
+          } else {
+            new import_obsidian7.Notice(result.error || "Export failed");
+          }
+        }
+      });
+    }
     if (this.settings.apiKey && this.settings.syncFolders.length > 0) {
       setTimeout(() => {
         this.syncEngine.initialSync();
@@ -5897,7 +7124,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
       const line = `${JSON.stringify(logEntry)}
 `;
       const existing = this.app.vault.getAbstractFileByPath(filePath);
-      if (existing instanceof import_obsidian6.TFile) {
+      if (existing instanceof import_obsidian7.TFile) {
         await this.app.vault.append(existing, line);
       } else {
         await this.app.vault.create(filePath, line);
@@ -5927,7 +7154,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
       const root = this.normalizeFolder(this.settings.workspaceFolder, DEFAULT_SETTINGS.workspaceFolder);
       const filePath = `${root}/logs/budget-${month}.jsonl`;
       const existing = this.app.vault.getAbstractFileByPath(filePath);
-      if (!(existing instanceof import_obsidian6.TFile))
+      if (!(existing instanceof import_obsidian7.TFile))
         return 0;
       const text = await this.app.vault.cachedRead(existing);
       const total = text.split("\n").map((line) => line.trim()).filter(Boolean).reduce((sum, line) => {
@@ -5978,7 +7205,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
   registerFileEvents() {
     this.registerEvent(
       this.app.vault.on("create", async (file) => {
-        if (this.settings.apiKey && file instanceof import_obsidian6.TFile && this.shouldSync(file)) {
+        if (this.settings.apiKey && file instanceof import_obsidian7.TFile && this.shouldSync(file)) {
           console.log("File created:", file.path);
           await this.syncEngine.handleFileCreate(file);
         }
@@ -5986,7 +7213,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("modify", async (file) => {
-        if (this.settings.apiKey && file instanceof import_obsidian6.TFile && this.shouldSync(file)) {
+        if (this.settings.apiKey && file instanceof import_obsidian7.TFile && this.shouldSync(file)) {
           console.log("File modified:", file.path);
           await this.syncEngine.handleFileModify(file);
         }
@@ -5994,7 +7221,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("delete", async (file) => {
-        if (this.settings.apiKey && file instanceof import_obsidian6.TFile && this.shouldSync(file)) {
+        if (this.settings.apiKey && file instanceof import_obsidian7.TFile && this.shouldSync(file)) {
           console.log("File deleted:", file.path);
           await this.syncEngine.handleFileDelete(file);
         }
@@ -6002,7 +7229,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("rename", async (file, oldPath) => {
-        if (file instanceof import_obsidian6.TFile) {
+        if (file instanceof import_obsidian7.TFile) {
           const wasInSyncFolder = this.isInSyncFolder(oldPath);
           const isInSyncFolder = this.shouldSync(file);
           if (this.settings.apiKey && (wasInSyncFolder || isInSyncFolder)) {
@@ -6107,7 +7334,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
       "- Avoid stiff translation tone; write as a practical Obsidian note the user can keep."
     ].join("\n");
     const existing = this.app.vault.getAbstractFileByPath(skillPath);
-    if (existing instanceof import_obsidian6.TFile) {
+    if (existing instanceof import_obsidian7.TFile) {
       await this.app.vault.modify(existing, content);
     } else {
       await this.app.vault.create(skillPath, content);
@@ -6125,7 +7352,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
     setting.open();
     (_a = setting.openTabById) == null ? void 0 : _a.call(setting, this.manifest.id);
   }
-  async activateChatView() {
+  async activateChatView(tab) {
     const { workspace } = this.app;
     let leaf = null;
     const leaves = workspace.getLeavesOfType(CHAT_VIEW_TYPE);
@@ -6139,6 +7366,12 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
     }
     if (leaf) {
       workspace.revealLeaf(leaf);
+      if (tab) {
+        const chatView = leaf.view;
+        if (chatView && typeof chatView.switchTab === "function") {
+          chatView.switchTab(tab);
+        }
+      }
     }
   }
 };
