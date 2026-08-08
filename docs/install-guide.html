@@ -1,0 +1,898 @@
+<title>Master of Knowledge — Installation Guide</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  @font-face {
+    font-family: 'JetBrains Mono';
+    src: local('JetBrains Mono'), local('JetBrainsMono-Regular');
+    font-weight: 400;
+  }
+
+  :root {
+    --bg-page: #0f0f1a;
+    --bg-card: #1a1a2e;
+    --bg-code: #141425;
+    --bg-hover: #252540;
+    --bg-inset: #111122;
+    --border: #2a2a45;
+    --border-accent: #7c3aed;
+    --text: #e4e4ef;
+    --text-muted: #8888a8;
+    --text-heading: #f0f0ff;
+    --accent: #7c3aed;
+    --accent-light: #a78bfa;
+    --accent-glow: rgba(124,58,237,0.15);
+    --success: #10b981;
+    --success-bg: rgba(16,185,129,0.1);
+    --warning: #f59e0b;
+    --warning-bg: rgba(245,158,11,0.1);
+    --error: #ef4444;
+    --error-bg: rgba(239,68,68,0.1);
+    --info: #06b6d4;
+    --info-bg: rgba(6,182,212,0.1);
+    --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg-page: #f8f8fc;
+      --bg-card: #ffffff;
+      --bg-code: #f0f0f6;
+      --bg-hover: #ededf5;
+      --bg-inset: #f4f4fa;
+      --border: #d8d8e8;
+      --border-accent: #7c3aed;
+      --text: #2a2a3e;
+      --text-muted: #6b6b88;
+      --text-heading: #1a1a2e;
+      --accent-glow: rgba(124,58,237,0.08);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg-page: #0f0f1a;
+    --bg-card: #1a1a2e;
+    --bg-code: #141425;
+    --bg-hover: #252540;
+    --bg-inset: #111122;
+    --border: #2a2a45;
+    --text: #e4e4ef;
+    --text-muted: #8888a8;
+    --text-heading: #f0f0ff;
+    --accent-glow: rgba(124,58,237,0.15);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font-body);
+    background: var(--bg-page);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 0;
+  }
+
+  /* Hero */
+  .hero {
+    padding: 60px 24px 48px;
+    text-align: center;
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 0%, var(--accent-glow), transparent),
+      var(--bg-page);
+    border-bottom: 1px solid var(--border);
+  }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 16px; border-radius: 20px;
+    background: var(--accent-glow); border: 1px solid var(--border-accent);
+    font-size: 13px; color: var(--accent-light);
+    margin-bottom: 20px; font-weight: 500;
+  }
+  .hero h1 {
+    font-size: clamp(28px, 5vw, 40px);
+    font-weight: 700;
+    color: var(--text-heading);
+    margin-bottom: 12px;
+    text-wrap: balance;
+    letter-spacing: -0.02em;
+  }
+  .hero p {
+    font-size: clamp(15px, 2.5vw, 17px);
+    color: var(--text-muted);
+    max-width: 540px;
+    margin: 0 auto;
+  }
+
+  /* Container */
+  .container {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 0 20px;
+  }
+
+  /* Navigation */
+  .toc {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--bg-page);
+    border-bottom: 1px solid var(--border);
+    padding: 0 20px;
+    overflow-x: auto;
+  }
+  .toc::-webkit-scrollbar { height: 0; }
+  .toc-inner {
+    max-width: 720px;
+    margin: 0 auto;
+    display: flex;
+    gap: 4px;
+    padding: 10px 0;
+  }
+  .toc a {
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--text-muted);
+    text-decoration: none;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+    font-weight: 500;
+  }
+  .toc a:hover { background: var(--bg-hover); color: var(--text); }
+  .toc a.active { background: var(--accent-glow); color: var(--accent-light); border: 1px solid var(--border-accent); }
+
+  /* Section */
+  .section {
+    padding: 48px 0 32px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section:last-child { border-bottom: none; }
+  .section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--accent-light);
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .section h2 {
+    font-size: clamp(22px, 4vw, 28px);
+    color: var(--text-heading);
+    margin-bottom: 16px;
+    letter-spacing: -0.015em;
+  }
+  .section > p {
+    color: var(--text-muted);
+    font-size: 15px;
+    margin-bottom: 20px;
+  }
+
+  /* Steps */
+  .steps { display: flex; flex-direction: column; gap: 20px; margin: 24px 0; }
+  .step {
+    display: flex; gap: 16px;
+    padding: 20px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    transition: border-color 0.2s ease;
+  }
+  .step:hover { border-color: var(--border-accent); }
+  .step-num {
+    flex-shrink: 0;
+    width: 36px; height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--accent);
+    color: #fff;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 700;
+  }
+  .step-body { flex: 1; min-width: 0; }
+  .step-body h4 {
+    font-size: 15px;
+    color: var(--text-heading);
+    margin-bottom: 6px;
+    font-weight: 600;
+  }
+  .step-body p {
+    font-size: 14px;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+  .step-body a {
+    color: var(--accent-light);
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .step-body a:hover { text-decoration: underline; }
+
+  /* Code block */
+  .code-block {
+    position: relative;
+    margin: 16px 0;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .code-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 14px;
+    background: var(--bg-inset);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .copy-btn {
+    padding: 4px 10px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-size: 11px;
+    cursor: pointer;
+    font-family: var(--font-body);
+  }
+  .copy-btn:hover { color: var(--text); border-color: var(--accent); }
+  .code-block pre {
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+  .code-block code { font-family: inherit; }
+
+  /* Inline code */
+  code {
+    background: var(--bg-code);
+    padding: 2px 7px;
+    border-radius: 5px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    border: 1px solid var(--border);
+  }
+
+  /* Callout boxes */
+  .callout {
+    display: flex; gap: 14px;
+    padding: 16px 18px;
+    border-radius: 12px;
+    margin: 18px 0;
+    font-size: 14px;
+    line-height: 1.6;
+    border: 1px solid;
+  }
+  .callout-icon { flex-shrink: 0; font-size: 18px; margin-top: 1px; }
+  .callout-body { flex: 1; min-width: 0; }
+  .callout-body strong { display: block; margin-bottom: 4px; }
+  .callout-body a { color: var(--accent-light); text-decoration: none; }
+  .callout-body a:hover { text-decoration: underline; }
+  .callout-info { background: var(--info-bg); border-color: rgba(6,182,212,0.25); }
+  .callout-info .callout-icon { color: var(--info); }
+  .callout-warning { background: var(--warning-bg); border-color: rgba(245,158,11,0.25); }
+  .callout-warning .callout-icon { color: var(--warning); }
+  .callout-error { background: var(--error-bg); border-color: rgba(239,68,68,0.25); }
+  .callout-error .callout-icon { color: var(--error); }
+  .callout-success { background: var(--success-bg); border-color: rgba(16,185,129,0.25); }
+  .callout-success .callout-icon { color: var(--success); }
+
+  /* Methods toggle */
+  .method-tabs {
+    display: flex; gap: 6px; margin-bottom: 20px;
+  }
+  .method-tab {
+    padding: 8px 18px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-card);
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: var(--font-body);
+    transition: all 0.15s ease;
+  }
+  .method-tab:hover { border-color: var(--accent); color: var(--text); }
+  .method-tab.active {
+    background: var(--accent-glow);
+    border-color: var(--border-accent);
+    color: var(--accent-light);
+  }
+  .method-content { display: none; }
+  .method-content.active { display: block; }
+
+  /* Table */
+  .config-table-wrap { overflow-x: auto; margin: 20px 0; }
+  .config-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .config-table th {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--border);
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+  .config-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    vertical-align: top;
+  }
+  .config-table td:first-child {
+    font-weight: 600;
+    white-space: nowrap;
+    color: var(--text-heading);
+  }
+  .config-table tbody tr:hover { background: var(--bg-hover); }
+  .config-table td code { font-size: 12px; }
+
+  /* Diagnostic stages */
+  .diag-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin: 16px 0;
+  }
+  @media (max-width: 500px) { .diag-grid { grid-template-columns: 1fr; } }
+  .diag-card {
+    padding: 14px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .diag-card .diag-stage {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent-light);
+    margin-bottom: 4px;
+  }
+  .diag-card p { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+
+  /* Troubleshoot accordion */
+  .accordion { display: flex; flex-direction: column; gap: 8px; margin: 20px 0; }
+  .accordion-item {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--bg-card);
+  }
+  .accordion-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 18px;
+    background: none; border: none; width: 100%;
+    font-size: 14px; font-weight: 600;
+    color: var(--text-heading); cursor: pointer;
+    font-family: var(--font-body);
+    text-align: left;
+  }
+  .accordion-header:hover { background: var(--bg-hover); }
+  .accordion-arrow {
+    font-size: 11px; color: var(--text-muted);
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+  }
+  .accordion-item.open .accordion-arrow { transform: rotate(90deg); }
+  .accordion-body {
+    padding: 0 18px 16px;
+    font-size: 14px;
+    color: var(--text-muted);
+    line-height: 1.7;
+    display: none;
+  }
+  .accordion-item.open .accordion-body { display: block; }
+  .accordion-body ul {
+    list-style: none; padding: 0; margin: 8px 0;
+  }
+  .accordion-body li {
+    padding: 4px 0 4px 20px;
+    position: relative;
+  }
+  .accordion-body li::before {
+    content: ''; position: absolute; left: 6px; top: 12px;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--accent-light);
+  }
+
+  /* Mobile platform badges */
+  .platform-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 16px 0;
+  }
+  @media (max-width: 600px) { .platform-grid { grid-template-columns: 1fr 1fr; } }
+  .platform-card {
+    padding: 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    text-align: center;
+  }
+  .platform-card .p-icon { font-size: 28px; margin-bottom: 8px; }
+  .platform-card h4 { font-size: 14px; color: var(--text-heading); margin-bottom: 4px; }
+  .platform-card p { font-size: 12px; color: var(--text-muted); }
+  .tag {
+    display: inline-block; padding: 2px 8px;
+    border-radius: 6px; font-size: 11px; font-weight: 600;
+    margin-top: 6px;
+  }
+  .tag-ok { background: var(--success-bg); color: var(--success); }
+  .tag-desktop { background: var(--warning-bg); color: var(--warning); }
+
+  /* Footer */
+  .footer {
+    padding: 32px 20px;
+    text-align: center;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-top: 24px;
+  }
+  .footer a { color: var(--accent-light); text-decoration: none; }
+  .footer a:hover { text-decoration: underline; }
+
+  /* Responsive */
+  @media (max-width: 600px) {
+    .hero { padding: 40px 16px 32px; }
+    .section { padding: 32px 0 24px; }
+    .step { flex-direction: column; gap: 12px; }
+  }
+</style>
+
+<!-- Hero -->
+<div class="hero">
+  <div class="hero-badge">🧠 Master of Knowledge</div>
+  <h1>Installation Guide</h1>
+  <p>Obsidian vault를 Gemini 기반 지식 작업실로 만드는 플러그인 설치 및 설정 가이드</p>
+</div>
+
+<!-- TOC -->
+<nav class="toc" id="toc">
+  <div class="toc-inner">
+    <a href="#install" class="active">Install</a>
+    <a href="#setup">Setup</a>
+    <a href="#config">Config</a>
+    <a href="#diagnose">Diagnose</a>
+    <a href="#mobile">Mobile</a>
+    <a href="#troubleshoot">Troubleshoot</a>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- Install -->
+  <section class="section" id="install">
+    <div class="section-label">Step 1</div>
+    <h2>Install the Plugin</h2>
+    <p>두 가지 설치 방법 중 하나를 선택하세요.</p>
+
+    <div class="method-tabs">
+      <button class="method-tab active" data-method="manual">Manual Install</button>
+      <button class="method-tab" data-method="source">Build from Source</button>
+    </div>
+
+    <div class="method-content active" id="method-manual">
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <h4>릴리즈 파일 다운로드</h4>
+            <p>최신 릴리즈에서 <code>main.js</code>, <code>manifest.json</code>, <code>styles.css</code> 세 파일을 다운로드합니다.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <h4>플러그인 폴더 생성</h4>
+            <p>볼트 안에 플러그인 폴더를 만듭니다.</p>
+            <div class="code-block">
+              <div class="code-header"><span>Terminal</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+              <pre><code>.obsidian/plugins/master-of-knowledge/</code></pre>
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <h4>파일 복사 및 활성화</h4>
+            <p>다운로드한 세 파일을 해당 폴더에 넣고, Obsidian 설정 > Community Plugins에서 <strong>Master of Knowledge</strong>를 활성화합니다.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">ℹ</div>
+        <div class="callout-body">
+          <strong>Plugin ID 변경 안내</strong>
+          v2.0.0부터 플러그인 ID가 <code>master-of-knowledge</code>로 변경되었습니다. 이전 BRAT 빌드(<code>obsidian-gemini-sync</code>)에서 업그레이드하는 경우 새 폴더명으로 설치하고 설정을 복사하세요.
+        </div>
+      </div>
+    </div>
+
+    <div class="method-content" id="method-source">
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <h4>저장소 클론</h4>
+            <p>볼트의 플러그인 디렉토리에 저장소를 클론합니다.</p>
+            <div class="code-block">
+              <div class="code-header"><span>Terminal</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+              <pre><code>cd your-vault/.obsidian/plugins/
+git clone https://github.com/kidongnam1/omg-search.git master-of-knowledge</code></pre>
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <h4>의존성 설치 및 빌드</h4>
+            <div class="code-block">
+              <div class="code-header"><span>Terminal</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+              <pre><code>cd master-of-knowledge
+npm install
+npm run build</code></pre>
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <h4>플러그인 활성화</h4>
+            <p>Obsidian을 재시작하거나 Community Plugins를 새로고침한 후 <strong>Master of Knowledge</strong>를 활성화합니다.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">ℹ</div>
+        <div class="callout-body">
+          <strong>개발 모드</strong>
+          <code>npm run dev</code>로 watch 모드를 실행하면 코드 변경 시 자동으로 다시 빌드됩니다.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Setup -->
+  <section class="section" id="setup">
+    <div class="section-label">Step 2</div>
+    <h2>Initial Setup</h2>
+    <p>플러그인을 활성화한 후 아래 순서대로 설정합니다.</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h4>Gemini API 키 발급</h4>
+          <p><a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a>에서 새 API 키를 만듭니다. 키는 보통 <code>AIza</code>로 시작합니다.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h4>API 키 입력 및 검증</h4>
+          <p>Obsidian 설정 > Master of Knowledge로 이동하여 API 키를 붙여 넣고 <strong>Verify</strong> 버튼을 누릅니다.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h4>File Search 진단 (권장)</h4>
+          <p>노트 동기화를 사용할 예정이라면 <strong>Diagnose File Search</strong>를 눌러 업로드/import 권한을 확인합니다.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h4>동기화 폴더 선택</h4>
+          <p>Gemini에 동기화할 폴더를 하나 이상 선택합니다 (예: <code>Notes</code>, <code>Knowledge</code>).</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-body">
+          <h4>초기 동기화 실행</h4>
+          <p><strong>Sync Now</strong>를 눌러 선택한 폴더의 마크다운 파일을 Gemini File Search에 동기화합니다.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">6</div>
+        <div class="step-body">
+          <h4>대화 시작</h4>
+          <p>왼쪽 리본의 채팅 아이콘을 클릭하거나 <code>Ctrl/Cmd + P</code> > "Open Master of Knowledge"로 대시보드를 열고 노트에 대해 질문합니다.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout callout-warning">
+      <div class="callout-icon">⚠</div>
+      <div class="callout-body">
+        <strong>API 키 보안</strong>
+        API 키는 플러그인의 <code>data.json</code> 파일에 로컬 저장됩니다. 이 파일을 절대 공유하지 마세요.
+      </div>
+    </div>
+  </section>
+
+  <!-- Configuration -->
+  <section class="section" id="config">
+    <div class="section-label">Reference</div>
+    <h2>Configuration Options</h2>
+    <p>Settings 탭에서 조정할 수 있는 주요 옵션입니다.</p>
+
+    <div class="config-table-wrap">
+      <table class="config-table">
+        <thead>
+          <tr><th>Option</th><th>Description</th><th>Default</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>API Key</td><td>Google Gemini API 키</td><td>필수</td></tr>
+          <tr><td>Gemini Model</td><td>Chat에서 사용할 Gemini 모델</td><td><code>gemini-2.5-flash</code></td></tr>
+          <tr><td>Sync Folders</td><td>Gemini File Search에 동기화할 폴더</td><td>없음</td></tr>
+          <tr><td>Corpus Name</td><td>Gemini File Search store 이름</td><td><code>Obsidian Vault</code></td></tr>
+          <tr><td>Workspace</td><td>로그, 그래프, 작업 파일 저장 폴더</td><td><code>_omg</code></td></tr>
+          <tr><td>Agent Output</td><td>Agent가 생성한 노트 저장 폴더</td><td><code>_omg/agent</code></td></tr>
+          <tr><td>Monthly Budget</td><td>월간 Gemini API 예산 (USD)</td><td><code>$7</code></td></tr>
+          <tr><td>Auto Sync</td><td>파일 변경 시 자동 동기화</td><td>켜짐</td></tr>
+          <tr><td>Sync Debounce</td><td>변경 후 동기화 대기 시간</td><td><code>3000ms</code></td></tr>
+          <tr><td>Wiki Enabled</td><td>obsidian-wiki 통합 활성화</td><td>꺼짐</td></tr>
+          <tr><td>Staged Writes</td><td>위키 인제스트를 <code>_staging/</code>에서 검토</td><td>꺼짐</td></tr>
+          <tr><td>Auto Lint</td><td>인제스트 후 위키 린트 자동 실행</td><td>꺼짐</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Diagnose -->
+  <section class="section" id="diagnose">
+    <div class="section-label">Diagnostics</div>
+    <h2>File Search Diagnostics</h2>
+    <p>Verify는 통과하지만 Sync가 실패하는 경우, <strong>Diagnose File Search</strong>로 단계별 원인을 파악합니다.</p>
+
+    <div class="diag-grid">
+      <div class="diag-card">
+        <div class="diag-stage">models</div>
+        <p>Gemini 모델 호출 자체가 실패. API 키가 유효하지 않음.</p>
+      </div>
+      <div class="diag-card">
+        <div class="diag-stage">file_search_store</div>
+        <p>File Search store 생성/조회 실패. 키 권한 문제 가능성.</p>
+      </div>
+      <div class="diag-card">
+        <div class="diag-stage">files_upload</div>
+        <p>Files API 업로드 실패. 키 제한 또는 호환성 문제.</p>
+      </div>
+      <div class="diag-card">
+        <div class="diag-stage">import_file</div>
+        <p>업로드는 됐지만 File Search store로 import 실패.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-warning">
+      <div class="callout-icon">⚠</div>
+      <div class="callout-body">
+        <strong>AQ... 키 호환성 문제</strong>
+        새 Google AI Studio 키가 <code>AQ...</code>로 시작하고 <code>files_upload</code> 또는 <code>import_file</code> 단계에서 <code>403</code>이 발생하면, Gemini File Search와 새 Auth key 호환 문제일 수 있습니다. 기존 <code>AIza...</code> 키 또는 새 Google Cloud 프로젝트/키를 사용해보세요.
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <div class="callout-icon">ℹ</div>
+      <div class="callout-body">
+        <strong>참고 링크</strong><br>
+        <a href="https://ai.google.dev/gemini-api/docs/api-key" target="_blank">Gemini API Key docs</a> ·
+        <a href="https://ai.google.dev/gemini-api/docs/file-search" target="_blank">File Search docs</a> ·
+        <a href="https://discuss.ai.google.dev/t/new-aq-api-keys-failing-to-upload-to-file-search-store/140817" target="_blank">AQ key discussion</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Mobile -->
+  <section class="section" id="mobile">
+    <div class="section-label">Platform</div>
+    <h2>Mobile Support</h2>
+    <p>Android/iOS Obsidian 모바일에서 사용 가능한 기능과 데스크톱 전용 기능입니다.</p>
+
+    <div class="platform-grid">
+      <div class="platform-card">
+        <div class="p-icon">💬</div>
+        <h4>Chat</h4>
+        <span class="tag tag-ok">Mobile OK</span>
+      </div>
+      <div class="platform-card">
+        <div class="p-icon">🔄</div>
+        <h4>Sync</h4>
+        <span class="tag tag-ok">Mobile OK</span>
+      </div>
+      <div class="platform-card">
+        <div class="p-icon">💰</div>
+        <h4>Budget</h4>
+        <span class="tag tag-ok">Mobile OK</span>
+      </div>
+      <div class="platform-card">
+        <div class="p-icon">🕸</div>
+        <h4>Graph</h4>
+        <span class="tag tag-ok">Mobile OK</span>
+      </div>
+      <div class="platform-card">
+        <div class="p-icon">📁</div>
+        <h4>_omg</h4>
+        <span class="tag tag-ok">Mobile OK</span>
+      </div>
+      <div class="platform-card">
+        <div class="p-icon">⚙️</div>
+        <h4>Settings</h4>
+        <span class="tag tag-ok">Mobile OK</span>
+      </div>
+      <div class="platform-card">
+        <div class="p-icon">🧭</div>
+        <h4>Agent</h4>
+        <span class="tag tag-desktop">Desktop</span>
+      </div>
+      <div class="platform-card">
+        <div class="p-icon">📚</div>
+        <h4>Wiki</h4>
+        <span class="tag tag-desktop">Desktop</span>
+      </div>
+    </div>
+
+    <div class="callout callout-success">
+      <div class="callout-icon">✓</div>
+      <div class="callout-body">
+        <strong>Obsidian Sync 권장</strong>
+        Obsidian Sync(유료)를 사용하면 데스크톱과 모바일 간 볼트 및 플러그인 설정을 자동 동기화할 수 있습니다.
+      </div>
+    </div>
+  </section>
+
+  <!-- Troubleshoot -->
+  <section class="section" id="troubleshoot">
+    <div class="section-label">Help</div>
+    <h2>Troubleshooting</h2>
+    <p>자주 발생하는 문제와 해결 방법입니다.</p>
+
+    <div class="accordion">
+      <div class="accordion-item">
+        <button class="accordion-header">
+          <span class="accordion-arrow">▸</span>
+          API key is invalid / Verify 실패
+        </button>
+        <div class="accordion-body">
+          <ul>
+            <li><a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a>에서 새 키를 발급하세요 (보통 <code>AIza</code>로 시작).</li>
+            <li>Google Cloud 프로젝트에서 <strong>Generative Language API</strong>가 활성화되어 있는지 확인하세요.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="accordion-item">
+        <button class="accordion-header">
+          <span class="accordion-arrow">▸</span>
+          Verify는 되는데 Sync만 실패 / importFile 401
+        </button>
+        <div class="accordion-body">
+          <ul>
+            <li>API 키의 <strong>Application restrictions = None</strong>으로 설정 (HTTP referrer/IP 제한이 File Search를 차단할 수 있음).</li>
+            <li>키/프로젝트를 바꿨다면 <strong>Reset store</strong> 후 <strong>Sync Now</strong> 실행.</li>
+            <li>Verify는 <code>/models</code>와 <code>/fileSearchStores</code>를 함께 검사합니다.</li>
+            <li>Sync는 <code>uploadToFileSearchStore</code> 우선, 실패 시 Files API + <code>importFile</code> 폴백 사용.</li>
+            <li>계속 실패하면 <strong>Diagnose File Search</strong>로 단계별 확인.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="accordion-item">
+        <button class="accordion-header">
+          <span class="accordion-arrow">▸</span>
+          Sync Dashboard에 error 파일만 생김
+        </button>
+        <div class="accordion-body">
+          <ul>
+            <li>Sync 폴더가 올바르게 선택되었는지 확인합니다.</li>
+            <li><strong>Diagnose File Search</strong>를 실행해 실패 단계를 확인합니다.</li>
+            <li>API 키가 <code>AQ...</code>이고 401/403이 발생하면 File Search 호환/제한 문제일 수 있습니다.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="accordion-item">
+        <button class="accordion-header">
+          <span class="accordion-arrow">▸</span>
+          Chat이 내 노트를 참조하지 않음
+        </button>
+        <div class="accordion-body">
+          <ul>
+            <li>Sync Dashboard에서 synced 파일 수를 확인하세요.</li>
+            <li>선택한 sync 폴더 안의 노트만 Gemini File Search 대상입니다.</li>
+            <li>답변 아래 <strong>Sources</strong>가 표시되는지 확인하세요.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="accordion-item">
+        <button class="accordion-header">
+          <span class="accordion-arrow">▸</span>
+          Agent가 느리거나 응답이 없음
+        </button>
+        <div class="accordion-body">
+          <ul>
+            <li>Agent Timeout 값을 늘려보세요.</li>
+            <li>Antigravity/AGY CLI 경로를 설정에서 Auto-detect하거나 직접 지정하세요.</li>
+            <li>Agent는 Gemini API 예산에 포함되지 않습니다 (별도 키 사용).</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="accordion-item">
+        <button class="accordion-header">
+          <span class="accordion-arrow">▸</span>
+          Chat 응답 없음
+        </button>
+        <div class="accordion-body">
+          <ul>
+            <li>API 키가 유효한지 다시 확인하세요.</li>
+            <li>인터넷 연결을 확인하세요.</li>
+            <li>개발자 콘솔(<code>Ctrl+Shift+I</code>)에서 오류를 확인하세요.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  <p>Master of Knowledge · Built with <a href="https://github.com/obsidianmd/obsidian-api" target="_blank">Obsidian Plugin API</a> · Powered by <a href="https://ai.google.dev/" target="_blank">Google Gemini API</a></p>
+  <p style="margin-top:6px;">MIT License</p>
+</div>
+
+<script>
+  // Method tabs
+  document.querySelectorAll('.method-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.method-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.method-content').forEach(c => c.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('method-' + tab.dataset.method).classList.add('active');
+    });
+  });
+
+  // Accordion
+  document.querySelectorAll('.accordion-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const item = header.parentElement;
+      item.classList.toggle('open');
+      header.querySelector('.accordion-arrow').textContent = item.classList.contains('open') ? '▾' : '▸';
+    });
+  });
+
+  // TOC scroll highlight
+  const tocLinks = document.querySelectorAll('.toc a');
+  const sections = document.querySelectorAll('.section');
+
+  function updateToc() {
+    let current = '';
+    sections.forEach(s => {
+      if (s.getBoundingClientRect().top <= 80) current = s.id;
+    });
+    tocLinks.forEach(a => {
+      a.classList.toggle('active', a.getAttribute('href') === '#' + current);
+    });
+  }
+  window.addEventListener('scroll', updateToc, {passive: true});
+
+  // Copy code
+  function copyCode(btn) {
+    const code = btn.closest('.code-block').querySelector('code').textContent;
+    navigator.clipboard.writeText(code).then(() => {
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = 'Copy', 1500);
+    });
+  }
+</script>
