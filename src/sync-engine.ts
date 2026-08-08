@@ -22,6 +22,11 @@ export class SyncEngine {
 		);
 	}
 
+	stop() {
+		this.syncQueue.clear();
+		this.isSyncing = false;
+	}
+
 	// ==================== Hash Utilities ====================
 
 	private async calculateHash(content: string): Promise<string> {
@@ -187,6 +192,11 @@ export class SyncEngine {
 		this.plugin.updateChatViewSyncStatus();
 
 		console.log(`[SyncEngine] Queue processed: ${successCount} success, ${errorCount} errors`);
+
+		// Re-process if new items arrived during sync
+		if (this.syncQueue.size > 0) {
+			this.debouncedProcessQueue();
+		}
 	}
 
 	// ==================== File Sync Logic ====================

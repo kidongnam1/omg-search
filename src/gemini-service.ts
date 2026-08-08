@@ -994,13 +994,12 @@ export class GeminiService {
 				displayName = getResponse.data.displayName;
 			}
 
-			// Delete the existing document
-			await this.deleteDocument(documentName);
-
-			// Re-create as new document with same display name
+			// Upload new document first, then delete old one to avoid data loss
 			const newDoc = await this.uploadDocument(corpusName, displayName, content);
+			if (!newDoc) return false;
 
-			return !!newDoc;
+			await this.deleteDocument(documentName);
+			return true;
 		} catch (error) {
 			console.error('Update document error:', error);
 			return false;
@@ -1573,13 +1572,15 @@ Instructions:
 		return Array.from(tokens);
 	}
 
+	private static readonly STOP_TOKENS = new Set([
+		'the', 'and', 'for', 'with', 'from', 'that', 'this', 'you', 'your',
+		'are', 'was', 'were', 'have', 'has', 'not', 'can', 'will',
+		'대한', '관련', '작성', '내용', '노트', '활용', '사용자', '초안',
+		'있습니다', '합니다', '위한', '에게', '에서', '으로', '그리고'
+	]);
+
 	private isStopToken(token: string): boolean {
-		return new Set([
-			'the', 'and', 'for', 'with', 'from', 'that', 'this', 'you', 'your',
-			'are', 'was', 'were', 'have', 'has', 'not', 'can', 'will',
-			'대한', '관련', '작성', '내용', '노트', '활용', '사용자', '초안',
-			'있습니다', '합니다', '위한', '에게', '에서', '으로', '그리고'
-		]).has(token);
+		return GeminiService.STOP_TOKENS.has(token);
 	}
 
 	private async sendMessageWithRetry(chat: any, userMessage: string) {
@@ -1633,12 +1634,13 @@ Instructions:
 				try {
 					const file = this.plugin.app.vault.getAbstractFileByPath(path);
 					if (file && file instanceof TFile && file.extension === 'md') {
-						const content = await this.plugin.app.vault.read(file);
-
 						if (recordKindFilter) {
-							const kind = this.parseFrontmatterField(content, 'record_kind');
+							const cache = this.plugin.app.metadataCache.getFileCache(file);
+							const kind = cache?.frontmatter?.['record_kind'];
 							if (kind !== recordKindFilter) continue;
 						}
+
+						const content = await this.plugin.app.vault.read(file);
 
 						// Truncate if too long
 						const truncated = content.length > 2000

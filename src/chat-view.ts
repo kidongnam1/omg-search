@@ -1958,8 +1958,9 @@ export class ChatView extends ItemView {
 		const visibleEdges = edges
 			.filter(edge => positions.has(edge.from) && positions.has(edge.to))
 			.slice(0, 420);
-		for (let iter = 0; iter < 180; iter++) {
-			const alpha = 1 - iter / 180;
+		const maxIter = nodes.length > 200 ? 60 : nodes.length > 100 ? 100 : 180;
+		for (let iter = 0; iter < maxIter; iter++) {
+			const alpha = 1 - iter / maxIter;
 			for (let i = 0; i < nodes.length; i++) {
 				const a = positions.get(nodes[i].id);
 				if (!a) continue;
@@ -2846,11 +2847,12 @@ export class ChatView extends ItemView {
 			});
 		}
 
-		// Close dropdown when clicking outside
+		// Close dropdown when clicking outside — track controller to prevent listener leaks
+		let dropdownAc: AbortController | null = null;
 		const closeDropdown = (e: MouseEvent) => {
 			if (!applyContainer.contains(e.target as Node)) {
 				dropdownMenu.style.display = 'none';
-				document.removeEventListener('click', closeDropdown);
+				if (dropdownAc) { dropdownAc.abort(); dropdownAc = null; }
 			}
 		};
 
@@ -2862,15 +2864,17 @@ export class ChatView extends ItemView {
 			const isCurrentlyVisible = dropdownMenu.style.display === 'block';
 
 			if (isCurrentlyVisible) {
-				// Close dropdown
 				dropdownMenu.style.display = 'none';
-				document.removeEventListener('click', closeDropdown);
+				if (dropdownAc) { dropdownAc.abort(); dropdownAc = null; }
 			} else {
-				// Open dropdown
 				dropdownMenu.style.display = 'block';
-				// Add outside click listener after a small delay
+				if (dropdownAc) { dropdownAc.abort(); }
+				dropdownAc = new AbortController();
+				const signal = dropdownAc.signal;
 				setTimeout(() => {
-					document.addEventListener('click', closeDropdown);
+					if (!signal.aborted) {
+						document.addEventListener('click', closeDropdown, { signal });
+					}
 				}, 0);
 			}
 		});

@@ -309,15 +309,15 @@ export class WikiService {
 	}
 
 	async runCrossLinker(): Promise<WikiCliResult> {
-		return this.runCliCommand(['lint', '--consolidate'], 60000);
+		return this.runCliCommand(['cross-link'], 60000);
 	}
 
 	async runDedup(): Promise<WikiCliResult> {
-		return this.runCliCommand(['lint', '--consolidate'], 60000);
+		return this.runCliCommand(['dedup'], 60000);
 	}
 
 	async runRebuild(): Promise<WikiCliResult> {
-		return this.runCliCommand(['lint', '--consolidate'], 120000);
+		return this.runCliCommand(['rebuild'], 120000);
 	}
 
 	async runSync(): Promise<WikiCliResult> {
@@ -482,7 +482,7 @@ export class WikiService {
 	async runExport(format: 'json' | 'graphml' | 'cypher' | 'html'): Promise<WikiCliResult> {
 		const cli = this.requireCli();
 		try {
-			const args = ['graph-analyse'];
+			const args = ['graph-analyse', '--format', format];
 			const out = await this.exec(cli, args, 30000, this.getEnv());
 			return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : undefined };
 		} catch (e: any) {
