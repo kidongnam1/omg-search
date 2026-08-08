@@ -1,0 +1,855 @@
+<title>Master of Knowledge — Mobile UI</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+  :root {
+    --bg-primary: #1e1e2e;
+    --bg-secondary: #282a3a;
+    --bg-hover: #32344a;
+    --bg-active: #3a3c52;
+    --border: #363649;
+    --text-normal: #e0e0e6;
+    --text-muted: #888899;
+    --text-on-accent: #ffffff;
+    --accent: #7c3aed;
+    --accent-hover: #6d28d9;
+    --accent-light: #a78bfa;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --error: #ef4444;
+    --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'Roboto Mono', 'SF Mono', monospace;
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg-primary: #ffffff;
+      --bg-secondary: #f3f4f6;
+      --bg-hover: #e5e7eb;
+      --bg-active: #d1d5db;
+      --border: #d1d5db;
+      --text-normal: #1f2937;
+      --text-muted: #6b7280;
+      --accent-light: #8b5cf6;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg-primary: #1e1e2e;
+    --bg-secondary: #282a3a;
+    --bg-hover: #32344a;
+    --bg-active: #3a3c52;
+    --border: #363649;
+    --text-normal: #e0e0e6;
+    --text-muted: #888899;
+    --accent-light: #a78bfa;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  body {
+    font-family: var(--font-ui);
+    background: var(--bg-primary);
+    color: var(--text-normal);
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding: 12px 8px;
+  }
+
+  .phone-frame {
+    width: 100%;
+    max-width: 390px;
+    height: 94vh;
+    height: 94dvh;
+    min-height: 640px;
+    max-height: 850px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-primary);
+    box-shadow: 0 8px 40px rgba(0,0,0,0.4);
+  }
+
+  /* ===== Header ===== */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+  }
+  .header-left { display: flex; align-items: center; gap: 10px; }
+  .header-icon {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-light));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+  }
+  .header h4 { font-size: 15px; font-weight: 600; }
+  .header-right { display: flex; align-items: center; gap: 10px; }
+  .sync-badge {
+    padding: 4px 10px; border-radius: 12px; font-size: 11px;
+    background: rgba(16,185,129,0.15); color: var(--success);
+    font-weight: 600; font-variant-numeric: tabular-nums;
+  }
+  .icon-btn {
+    width: 36px; height: 36px; border: none; border-radius: 10px;
+    background: var(--bg-hover); color: var(--text-muted);
+    font-size: 16px; cursor: pointer; display: flex;
+    align-items: center; justify-content: center;
+  }
+  .icon-btn:active { background: var(--bg-active); }
+
+  /* ===== Content area ===== */
+  .content {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
+    position: relative;
+  }
+
+  .tab-content {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
+    position: absolute; inset: 0;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+  .tab-content.active { opacity: 1; pointer-events: auto; position: relative; }
+
+  /* ===== Bottom Nav ===== */
+  .bottom-nav {
+    display: flex;
+    border-top: 1px solid var(--border);
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+    padding-bottom: var(--safe-bottom);
+  }
+  .nav-item {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; gap: 3px;
+    padding: 10px 4px 8px;
+    border: none; background: none;
+    color: var(--text-muted); font-size: 10px;
+    cursor: pointer; font-family: var(--font-ui);
+    transition: color 0.15s ease;
+  }
+  .nav-item .nav-icon { font-size: 20px; line-height: 1; }
+  .nav-item.active { color: var(--accent-light); }
+  .nav-item:active { background: var(--bg-hover); }
+
+  /* ===== Conversation toolbar ===== */
+  .conv-toolbar {
+    display: flex; align-items: center;
+    justify-content: space-between; gap: 10px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .conv-label { font-size: 13px; font-weight: 600; }
+  .conv-label small { display: block; color: var(--text-muted); font-size: 11px; font-weight: 400; margin-top: 2px; }
+  .pill-btn {
+    padding: 6px 14px; border: 1px solid var(--border);
+    border-radius: 20px; background: var(--bg-secondary);
+    color: var(--text-normal); font-size: 12px;
+    cursor: pointer; font-family: var(--font-ui);
+    white-space: nowrap;
+  }
+  .pill-btn:active { background: var(--bg-active); border-color: var(--accent); }
+
+  /* ===== Messages ===== */
+  .messages {
+    flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 16px; display: flex; flex-direction: column; gap: 14px;
+  }
+
+  /* Welcome */
+  .welcome { text-align: center; padding: 32px 12px; color: var(--text-muted); }
+  .welcome-icon { font-size: 48px; margin-bottom: 16px; }
+  .welcome h3 { margin-bottom: 8px; font-size: 18px; color: var(--text-normal); }
+  .welcome p { font-size: 14px; line-height: 1.5; margin-bottom: 4px; }
+  .examples { margin-top: 24px; }
+  .examples > p { font-size: 12px; margin-bottom: 10px; color: var(--text-muted); }
+  .example-btn {
+    display: block; width: 100%; padding: 14px 16px; margin-bottom: 10px;
+    background: var(--bg-secondary); border: 1px solid var(--border);
+    border-radius: 14px; font-size: 14px; color: var(--text-normal);
+    cursor: pointer; text-align: left; font-family: var(--font-ui);
+  }
+  .example-btn:active { background: var(--bg-hover); border-color: var(--accent); }
+
+  /* Message bubbles */
+  .msg { display: flex; gap: 10px; max-width: 92%; }
+  .msg-user { align-self: flex-end; flex-direction: row-reverse; }
+  .msg-model { align-self: flex-start; }
+  .avatar {
+    flex-shrink: 0; width: 30px; height: 30px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-secondary); border-radius: 50%; font-size: 14px;
+  }
+  .msg-wrapper { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+  .msg-content {
+    padding: 12px 16px; border-radius: 18px;
+    font-size: 15px; line-height: 1.55;
+    overflow-wrap: break-word;
+  }
+  .msg-user .msg-content {
+    background: var(--accent); color: var(--text-on-accent);
+    border-bottom-right-radius: 6px;
+  }
+  .msg-model .msg-content {
+    background: var(--bg-secondary); color: var(--text-normal);
+    border-bottom-left-radius: 6px;
+  }
+  .msg-content p { margin: 0 0 8px; }
+  .msg-content p:last-child { margin-bottom: 0; }
+  .msg-content code {
+    background: var(--bg-primary); padding: 2px 6px;
+    border-radius: 4px; font-size: 13px; font-family: var(--font-mono);
+  }
+
+  /* Citations */
+  .citations { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .citations-label { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+  .citation-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .citation-title {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-weight: 600; font-size: 13px;
+  }
+  .citation-open {
+    padding: 6px 12px; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--bg-secondary);
+    color: var(--text-normal); font-size: 12px; cursor: pointer;
+    font-family: var(--font-ui); white-space: nowrap;
+  }
+  .citation-open:active { border-color: var(--accent); color: var(--accent); }
+
+  /* Actions */
+  .actions {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;
+    padding-top: 10px; border-top: 1px solid var(--border);
+  }
+  .action-btn {
+    padding: 8px 16px; font-size: 13px;
+    background: var(--bg-primary); border: 1px solid var(--border);
+    border-radius: 10px; color: var(--text-normal); cursor: pointer;
+    font-family: var(--font-ui);
+  }
+  .action-btn:active { background: var(--bg-hover); border-color: var(--accent); }
+  .apply-container { position: relative; display: flex; }
+  .apply-btn { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: none; }
+  .dropdown-arrow {
+    padding: 8px 10px; font-size: 10px;
+    background: var(--bg-primary); border: 1px solid var(--border);
+    border-left: none; border-radius: 0 10px 10px 0;
+    color: var(--text-muted); cursor: pointer; font-family: var(--font-ui);
+  }
+  .dropdown-menu {
+    position: absolute; bottom: 100%; left: 0; margin-bottom: 6px;
+    min-width: 220px; background: var(--bg-primary);
+    border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 -4px 20px rgba(0,0,0,0.3); z-index: 100;
+    overflow: hidden; display: none;
+  }
+  .dropdown-menu.open { display: block; }
+  .dropdown-item {
+    padding: 14px 16px; font-size: 14px; color: var(--text-normal);
+    cursor: pointer;
+  }
+  .dropdown-item:active { background: var(--bg-hover); }
+  .dropdown-item:not(:last-child) { border-bottom: 1px solid var(--border); }
+
+  /* ===== Input ===== */
+  .input-container {
+    display: flex; align-items: flex-end; gap: 8px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+  }
+  .chat-input {
+    flex: 1; min-height: 42px; max-height: 120px;
+    padding: 10px 16px; border: 1px solid var(--border);
+    border-radius: 22px; background: var(--bg-primary);
+    color: var(--text-normal); font-size: 15px;
+    resize: none; outline: none; font-family: var(--font-ui);
+  }
+  .chat-input:focus { border-color: var(--accent); }
+  .chat-input::placeholder { color: var(--text-muted); }
+  .send-btn {
+    width: 42px; height: 42px; padding: 0; border: none;
+    border-radius: 50%; background: var(--accent);
+    color: var(--text-on-accent); font-size: 18px;
+    cursor: pointer; flex-shrink: 0;
+  }
+  .send-btn:active { background: var(--accent-hover); transform: scale(0.95); }
+
+  /* ===== Panel ===== */
+  .panel {
+    padding: 20px 16px; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    flex: 1; min-height: 0;
+  }
+  .panel h3 { margin-bottom: 12px; font-size: 17px; }
+
+  /* Desktop-only placeholder */
+  .desktop-only {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 40px 24px; text-align: center; color: var(--text-muted);
+  }
+  .desktop-only .do-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.6; }
+  .desktop-only h3 { color: var(--text-normal); margin-bottom: 8px; font-size: 17px; }
+  .desktop-only p { font-size: 14px; line-height: 1.5; max-width: 280px; }
+
+  /* Budget */
+  .budget-meter {
+    width: 100%; height: 12px; border-radius: 999px;
+    background: var(--bg-secondary); border: 1px solid var(--border);
+    overflow: hidden; margin: 14px 0;
+  }
+  .budget-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+  .budget-info { font-size: 14px; color: var(--text-muted); line-height: 1.6; margin: 10px 0; }
+  .budget-amount {
+    font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums;
+    color: var(--text-normal); margin-top: 4px;
+  }
+  .budget-amount small { font-size: 16px; color: var(--text-muted); font-weight: 400; }
+
+  /* Workspace */
+  .workspace-list { list-style: none; padding: 0; margin: 12px 0; }
+  .workspace-list li {
+    padding: 14px 16px; margin-bottom: 6px;
+    background: var(--bg-secondary); border-radius: 12px;
+    font-size: 14px; display: flex; justify-content: space-between; align-items: center;
+  }
+  .status-ready { color: var(--success); font-size: 12px; font-weight: 600; }
+  .status-missing { color: var(--text-muted); font-size: 12px; }
+
+  /* Graph */
+  .graph-panel { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; }
+  .graph-header h3 { margin-bottom: 4px; }
+  .graph-header p { margin: 0; color: var(--text-muted); font-size: 13px; }
+  .graph-controls {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 10px; border: 1px solid var(--border);
+    border-radius: 12px; background: var(--bg-secondary);
+  }
+  .graph-control-label {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--text-muted);
+  }
+  .graph-control-label input[type="range"] { width: 80px; }
+  .graph-control-label input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
+  .graph-stats { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .graph-wrap {
+    position: relative; flex: 1; min-height: 260px;
+    border: 1px solid var(--border); border-radius: 12px;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at center, rgba(255,255,255,0.04) 0 1px, transparent 1px 100%),
+      var(--bg-primary);
+    background-size: 18px 18px;
+  }
+  .graph-svg { width: 100%; height: 100%; min-height: 260px; display: block; touch-action: none; }
+  .graph-edge { stroke: rgba(200,205,230,0.3); stroke-width: 1; }
+  .graph-node { cursor: pointer; }
+  .graph-node circle {
+    stroke: rgba(255,255,255,0.7); stroke-width: 1.4;
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+  }
+  .graph-node text {
+    fill: var(--text-normal); font-size: 9px; font-weight: 650;
+    paint-order: stroke; stroke: var(--bg-primary); stroke-width: 3px;
+    stroke-linejoin: round; pointer-events: none;
+  }
+
+  /* Settings stat cards */
+  .stat-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px;
+  }
+  .stat-card {
+    padding: 16px; background: var(--bg-secondary);
+    border-radius: 14px; text-align: center;
+  }
+  .stat-card .stat-num {
+    font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums;
+  }
+  .stat-card .stat-label { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+  .stat-footer {
+    margin-top: 10px; padding: 12px 14px;
+    background: var(--bg-secondary); border-radius: 10px;
+    font-size: 13px; color: var(--text-muted);
+  }
+
+  /* Loading */
+  .loading { display: flex; align-items: center; gap: 8px; padding: 8px 16px; }
+  .loading-dots { font-size: 18px; color: var(--text-muted); animation: pulse 1.5s ease-in-out infinite; }
+  .loading-label { color: var(--text-muted); font-size: 14px; }
+  @keyframes pulse { 0%,100%{opacity:.3} 50%{opacity:1} }
+
+  .hidden { display: none !important; }
+</style>
+
+<div class="phone-frame">
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <div class="header-icon">🧠</div>
+      <h4>Master of Knowledge</h4>
+    </div>
+    <div class="header-right">
+      <span class="sync-badge">42 synced</span>
+      <button class="icon-btn" id="clearBtn">🗑</button>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="content">
+    <!-- Chat Tab -->
+    <div class="tab-content active" id="tab-chat">
+      <div class="conv-toolbar">
+        <div class="conv-label">Chat<small>Ask questions about your synced notes</small></div>
+        <button class="pill-btn" id="newChatBtn">+ New</button>
+      </div>
+      <div class="messages" id="chatMessages">
+        <div class="welcome" id="chatWelcome">
+          <div class="welcome-icon">🧠</div>
+          <h3>Ask your knowledge base</h3>
+          <p>Ask questions about your synced notes and get AI-powered answers grounded in your personal knowledge.</p>
+          <div class="examples">
+            <p>Try asking:</p>
+            <button class="example-btn" data-prompt="What are the main topics in my notes?">What are the main topics in my notes?</button>
+            <button class="example-btn" data-prompt="Summarize my notes about AI education">Summarize my notes about AI education</button>
+            <button class="example-btn" data-prompt="Find connections between my research notes">Find connections between my research notes</button>
+          </div>
+        </div>
+      </div>
+      <div class="input-container">
+        <textarea class="chat-input" id="chatInput" placeholder="Ask about your notes..." rows="1"></textarea>
+        <button class="send-btn" id="chatSend">➤</button>
+      </div>
+    </div>
+
+    <!-- Agent Tab (Desktop Only) -->
+    <div class="tab-content" id="tab-agent">
+      <div class="desktop-only">
+        <div class="do-icon">🧭</div>
+        <h3>Desktop Only</h3>
+        <p>Agent requires the Antigravity/AGY CLI which is not available on mobile. Use Chat for note-based Q&A on this device.</p>
+      </div>
+    </div>
+
+    <!-- Wiki Tab (Desktop Only) -->
+    <div class="tab-content" id="tab-wiki">
+      <div class="desktop-only">
+        <div class="do-icon">📚</div>
+        <h3>Desktop Only</h3>
+        <p>Wiki integration requires the obsidian-wiki CLI which is not available on mobile. Use Chat for note-based Q&A on this device.</p>
+      </div>
+    </div>
+
+    <!-- Budget Tab -->
+    <div class="tab-content" id="tab-budget">
+      <div class="panel">
+        <h3>Budget Guard</h3>
+        <div class="budget-amount">$0.42 <small>/ $7.00</small></div>
+        <p style="font-size:13px;color:var(--text-muted);margin-top:4px;">August 2026 · 6% used</p>
+        <div class="budget-meter"><div class="budget-fill" style="width:6%"></div></div>
+        <p class="budget-info">Costs are estimated from Gemini token metadata. Agent runs use a separate key and are not counted.</p>
+        <p class="budget-info">Log: <code style="background:var(--bg-secondary);padding:2px 6px;border-radius:4px;font-family:var(--font-mono);font-size:12px;">_omg/logs/budget-2026-08.jsonl</code></p>
+      </div>
+    </div>
+
+    <!-- Workspace Tab -->
+    <div class="tab-content" id="tab-workspace">
+      <div class="panel">
+        <h3>_omg Workspace</h3>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Agent reports, compiled notes, graph data, and logs — kept separate from your source notes.</p>
+        <ul class="workspace-list">
+          <li><span>_omg/compiled</span><span class="status-ready">ready</span></li>
+          <li><span>_omg/agent</span><span class="status-ready">ready</span></li>
+          <li><span>_omg/graph</span><span class="status-ready">ready</span></li>
+          <li><span>_omg/inbox</span><span class="status-missing">missing</span></li>
+          <li><span>_omg/logs</span><span class="status-ready">ready</span></li>
+        </ul>
+        <button class="action-btn" style="width:100%;padding:14px;">Create workspace folders</button>
+      </div>
+    </div>
+
+    <!-- Graph Tab -->
+    <div class="tab-content" id="tab-graph">
+      <div class="panel graph-panel">
+        <div class="graph-header">
+          <h3>Knowledge Graph</h3>
+          <p>PageRank sizing, community coloring, tap to inspect.</p>
+        </div>
+        <div class="graph-controls">
+          <label class="graph-control-label">
+            <span>Nodes</span>
+            <input type="range" min="40" max="200" value="80" id="graphMaxNodes">
+            <span id="graphMaxVal" style="min-width:24px;color:var(--text-normal);font-variant-numeric:tabular-nums;">80</span>
+          </label>
+          <label class="graph-control-label"><input type="checkbox" checked> Hide isolated</label>
+        </div>
+        <div class="graph-stats" id="graphStats">23 nodes · 38 links · 5 communities</div>
+        <div class="graph-wrap" id="graphWrap"></div>
+      </div>
+    </div>
+
+    <!-- Settings Tab -->
+    <div class="tab-content" id="tab-settings">
+      <div class="panel">
+        <h3>Sync Dashboard</h3>
+        <div class="stat-grid">
+          <div class="stat-card">
+            <div class="stat-num" style="color:var(--success);">42</div>
+            <div class="stat-label">Synced</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num" style="color:var(--warning);">3</div>
+            <div class="stat-label">Pending</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num" style="color:var(--error);">1</div>
+            <div class="stat-label">Error</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num">46</div>
+            <div class="stat-label">Total</div>
+          </div>
+        </div>
+        <div class="stat-footer">
+          Store: Obsidian Vault<br>Folders: Notes, Knowledge, Research
+        </div>
+        <div style="margin-top:20px;">
+          <h3>Quick Actions</h3>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px;">
+            <button class="action-btn" style="width:100%;padding:14px;text-align:left;">⚙️ Open plugin settings</button>
+            <button class="action-btn" style="width:100%;padding:14px;text-align:left;">🔄 Force sync now</button>
+            <button class="action-btn" style="width:100%;padding:14px;text-align:left;">🔍 Diagnose File Search</button>
+          </div>
+        </div>
+        <div style="margin-top:20px;padding:14px;background:var(--bg-secondary);border-radius:12px;">
+          <p style="font-size:13px;color:var(--text-muted);line-height:1.5;">
+            Agent and Wiki tabs are desktop-only (CLI required). Use Obsidian Sync to keep your vault in sync across devices.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Navigation -->
+  <div class="bottom-nav" id="bottomNav">
+    <button class="nav-item active" data-tab="chat">
+      <span class="nav-icon">💬</span><span>Chat</span>
+    </button>
+    <button class="nav-item" data-tab="agent">
+      <span class="nav-icon">🧭</span><span>Agent</span>
+    </button>
+    <button class="nav-item" data-tab="wiki">
+      <span class="nav-icon">📚</span><span>Wiki</span>
+    </button>
+    <button class="nav-item" data-tab="budget">
+      <span class="nav-icon">💰</span><span>Budget</span>
+    </button>
+    <button class="nav-item" data-tab="workspace">
+      <span class="nav-icon">📁</span><span>_omg</span>
+    </button>
+    <button class="nav-item" data-tab="graph">
+      <span class="nav-icon">🕸</span><span>Graph</span>
+    </button>
+    <button class="nav-item" data-tab="settings">
+      <span class="nav-icon">⚙️</span><span>Settings</span>
+    </button>
+  </div>
+</div>
+
+<script>
+  // Tab switching via bottom nav
+  const navItems = document.querySelectorAll('.nav-item');
+  const allTabs = ['chat','agent','wiki','budget','workspace','graph','settings'];
+
+  navItems.forEach(item => {
+    item.addEventListener('click', () => {
+      const id = item.dataset.tab;
+      navItems.forEach(n => n.classList.remove('active'));
+      item.classList.add('active');
+      allTabs.forEach(t => {
+        const el = document.getElementById('tab-' + t);
+        if (el) {
+          el.classList.toggle('active', t === id);
+          el.classList.toggle('hidden', t !== id);
+        }
+      });
+      if (id === 'graph') buildGraph();
+    });
+  });
+
+  // Example prompts
+  document.querySelectorAll('.example-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('chatInput').value = btn.dataset.prompt;
+      document.getElementById('chatInput').focus();
+    });
+  });
+
+  // Graph slider
+  const gs = document.getElementById('graphMaxNodes');
+  const gv = document.getElementById('graphMaxVal');
+  if (gs) gs.addEventListener('input', () => { gv.textContent = gs.value; });
+
+  // Chat send
+  const chatInput = document.getElementById('chatInput');
+  const chatSend = document.getElementById('chatSend');
+  const chatMessages = document.getElementById('chatMessages');
+
+  function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+  function sendChat() {
+    const text = chatInput.value.trim();
+    if (!text) return;
+    const welcome = document.getElementById('chatWelcome');
+    if (welcome) welcome.remove();
+
+    const userMsg = document.createElement('div');
+    userMsg.className = 'msg msg-user';
+    userMsg.innerHTML = `
+      <div class="avatar">👤</div>
+      <div class="msg-wrapper"><div class="msg-content"><p>${esc(text)}</p></div></div>
+    `;
+    chatMessages.appendChild(userMsg);
+    chatInput.value = '';
+
+    const loading = document.createElement('div');
+    loading.className = 'loading';
+    loading.innerHTML = '<span class="loading-dots">●●●</span><span class="loading-label">Thinking...</span>';
+    chatMessages.appendChild(loading);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    setTimeout(() => {
+      loading.remove();
+      const modelMsg = document.createElement('div');
+      modelMsg.className = 'msg msg-model';
+      modelMsg.innerHTML = `
+        <div class="avatar">🤖</div>
+        <div class="msg-wrapper">
+          <div class="msg-content">
+            <p>Based on your synced notes, your knowledge base covers several interconnected themes including AI education, Obsidian workflows, and research methodologies.</p>
+            <p>The most relevant notes are in your <code>Knowledge/</code> and <code>Research/</code> folders.</p>
+          </div>
+          <div class="citations">
+            <div class="citations-label">📎 Sources:</div>
+            <div class="citation-row">
+              <div class="citation-title">AI-Education-Notes</div>
+              <button class="citation-open">Open</button>
+            </div>
+            <div class="citation-row">
+              <div class="citation-title">Research-Methodology</div>
+              <button class="citation-open">Open</button>
+            </div>
+          </div>
+          <div class="actions">
+            <div class="apply-container">
+              <button class="action-btn apply-btn">📝 Apply</button>
+              <button class="action-btn dropdown-arrow" onclick="this.nextElementSibling.classList.toggle('open')">▼</button>
+              <div class="dropdown-menu">
+                <div class="dropdown-item">📍 Insert at Cursor</div>
+                <div class="dropdown-item">📎 Append to Current Note</div>
+                <div class="dropdown-item">📄 Create New Note</div>
+                <div class="dropdown-item">📂 Select Note...</div>
+                <div class="dropdown-item">🧠 Save to _omg</div>
+              </div>
+            </div>
+            <button class="action-btn">📋 Copy</button>
+          </div>
+        </div>
+      `;
+      chatMessages.appendChild(modelMsg);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }, 1200);
+  }
+
+  chatSend.addEventListener('click', sendChat);
+  chatInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+  });
+
+  // Clear / New chat
+  function resetChat() {
+    chatMessages.innerHTML = '';
+    const w = document.createElement('div');
+    w.className = 'welcome'; w.id = 'chatWelcome';
+    w.innerHTML = `
+      <div class="welcome-icon">🧠</div>
+      <h3>Ask your knowledge base</h3>
+      <p>Ask questions about your synced notes.</p>
+      <div class="examples"><p>Try asking:</p>
+        <button class="example-btn" data-prompt="What are the main topics in my notes?">What are the main topics in my notes?</button>
+        <button class="example-btn" data-prompt="Summarize my notes about AI education">Summarize my notes about AI education</button>
+      </div>
+    `;
+    chatMessages.appendChild(w);
+    w.querySelectorAll('.example-btn').forEach(btn => {
+      btn.addEventListener('click', () => { chatInput.value = btn.dataset.prompt; chatInput.focus(); });
+    });
+  }
+  document.getElementById('clearBtn').addEventListener('click', resetChat);
+  document.getElementById('newChatBtn').addEventListener('click', resetChat);
+
+  // Close dropdowns
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.apply-container'))
+      document.querySelectorAll('.dropdown-menu.open').forEach(m => m.classList.remove('open'));
+  });
+
+  // === Graph ===
+  function buildGraph() {
+    const wrap = document.getElementById('graphWrap');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    const W = wrap.clientWidth || 360;
+    const H = Math.max(wrap.clientHeight, 260);
+
+    const nodes = [
+      {id:'n1',t:'AI Education',c:0,pr:.95,d:8},
+      {id:'n2',t:'Obsidian Tips',c:0,pr:.72,d:6},
+      {id:'n3',t:'Research Notes',c:1,pr:.88,d:7},
+      {id:'n4',t:'LLM Overview',c:1,pr:.65,d:5},
+      {id:'n5',t:'Teaching',c:0,pr:.55,d:4},
+      {id:'n6',t:'Knowledge Mgmt',c:2,pr:.82,d:6},
+      {id:'n7',t:'PKM Strategies',c:2,pr:.60,d:4},
+      {id:'n8',t:'Writing',c:3,pr:.48,d:3},
+      {id:'n9',t:'Prompt Eng.',c:1,pr:.78,d:6},
+      {id:'n10',t:'Zettelkasten',c:2,pr:.70,d:5},
+      {id:'n11',t:'GPT Apps',c:1,pr:.50,d:3},
+      {id:'n12',t:'Templates',c:3,pr:.42,d:3},
+      {id:'n13',t:'Digital Garden',c:2,pr:.58,d:4},
+      {id:'n14',t:'Curriculum',c:0,pr:.62,d:5},
+      {id:'n15',t:'API Integration',c:4,pr:.45,d:3},
+      {id:'n16',t:'Plugin Dev',c:4,pr:.52,d:4},
+      {id:'n17',t:'Markdown',c:3,pr:.38,d:2},
+      {id:'n18',t:'EdTech',c:0,pr:.68,d:5},
+      {id:'n19',t:'Graph Theory',c:2,pr:.44,d:3},
+      {id:'n20',t:'Data Analysis',c:4,pr:.40,d:3},
+      {id:'t1',t:'#education',c:0,pr:.30,d:6,tag:true},
+      {id:'t2',t:'#AI',c:1,pr:.28,d:5,tag:true},
+      {id:'t3',t:'#PKM',c:2,pr:.26,d:4,tag:true},
+    ];
+
+    const edges = [
+      {f:'n1',t:'n2'},{f:'n1',t:'n5'},{f:'n1',t:'n14'},{f:'n1',t:'n18'},
+      {f:'n2',t:'n10'},{f:'n2',t:'n7'},{f:'n3',t:'n4'},{f:'n3',t:'n9'},
+      {f:'n3',t:'n11'},{f:'n4',t:'n9'},{f:'n4',t:'n11'},{f:'n5',t:'n14'},
+      {f:'n6',t:'n7'},{f:'n6',t:'n10'},{f:'n6',t:'n13'},{f:'n7',t:'n13'},
+      {f:'n8',t:'n12'},{f:'n8',t:'n17'},{f:'n9',t:'n15'},{f:'n10',t:'n19'},
+      {f:'n13',t:'n19'},{f:'n15',t:'n16'},{f:'n15',t:'n20'},{f:'n16',t:'n20'},
+      {f:'n18',t:'n14'},{f:'n1',t:'t1'},{f:'n5',t:'t1'},{f:'n14',t:'t1'},
+      {f:'n18',t:'t1'},{f:'n3',t:'t2'},{f:'n4',t:'t2'},{f:'n9',t:'t2'},
+      {f:'n11',t:'t2'},{f:'n6',t:'t3'},{f:'n7',t:'t3'},{f:'n10',t:'t3'},
+      {f:'n1',t:'n3'},{f:'n6',t:'n2'},{f:'n9',t:'n1'},
+    ];
+
+    const colors = ['#6366f1','#10b981','#f59e0b','#ec4899','#06b6d4'];
+    const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.setAttribute('class','graph-svg');
+    wrap.appendChild(svg);
+
+    const pos = {};
+    const comC = {};
+    [0,1,2,3,4].forEach((c,i) => {
+      const a = (i/5)*Math.PI*2 - Math.PI/2;
+      comC[c] = {x: W/2 + Math.cos(a)*W*0.2, y: H/2 + Math.sin(a)*H*0.2};
+    });
+
+    nodes.forEach((n,i) => {
+      const cc = comC[n.c]||{x:W/2,y:H/2};
+      const a = (i*2.399)%(Math.PI*2);
+      const r = 18 + (i%7)*7;
+      pos[n.id] = {
+        x: cc.x + Math.cos(a)*r,
+        y: cc.y + Math.sin(a)*r,
+        vx:0, vy:0,
+        r: n.tag ? 5 : 4 + Math.sqrt(n.pr)*12,
+        c: n.c
+      };
+    });
+
+    for (let iter=0; iter<120; iter++) {
+      const alpha = 1 - iter/120;
+      for (let i=0;i<nodes.length;i++) {
+        const a = pos[nodes[i].id];
+        for (let j=i+1;j<nodes.length;j++) {
+          const b = pos[nodes[j].id];
+          const dx=a.x-b.x, dy=a.y-b.y;
+          const distSq = Math.max(dx*dx+dy*dy, 120);
+          const force = (a.c===b.c ? 180 : 400) / distSq;
+          a.vx += dx*force*alpha; a.vy += dy*force*alpha;
+          b.vx -= dx*force*alpha; b.vy -= dy*force*alpha;
+        }
+      }
+      edges.forEach(e => {
+        const a=pos[e.f], b=pos[e.t];
+        if(!a||!b)return;
+        const dx=b.x-a.x, dy=b.y-a.y;
+        const dist = Math.max(Math.sqrt(dx*dx+dy*dy),1);
+        const force = (dist-60)*0.005*alpha;
+        a.vx += (dx/dist)*force; a.vy += (dy/dist)*force;
+        b.vx -= (dx/dist)*force; b.vy -= (dy/dist)*force;
+      });
+      nodes.forEach(n => {
+        const p = pos[n.id];
+        const cc = comC[n.c]||{x:W/2,y:H/2};
+        p.vx += (cc.x-p.x)*0.008*alpha; p.vy += (cc.y-p.y)*0.008*alpha;
+        p.vx += (W/2-p.x)*0.002*alpha; p.vy += (H/2-p.y)*0.002*alpha;
+        p.x += p.vx; p.y += p.vy;
+        p.vx *= 0.7; p.vy *= 0.7;
+        p.x = Math.max(p.r+4, Math.min(W-p.r-4, p.x));
+        p.y = Math.max(p.r+4, Math.min(H-p.r-4, p.y));
+      });
+    }
+
+    edges.forEach(e => {
+      const a=pos[e.f], b=pos[e.t];
+      if(!a||!b) return;
+      const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+      line.setAttribute('x1',a.x); line.setAttribute('y1',a.y);
+      line.setAttribute('x2',b.x); line.setAttribute('y2',b.y);
+      line.setAttribute('class','graph-edge');
+      svg.appendChild(line);
+    });
+
+    nodes.forEach(n => {
+      const p = pos[n.id];
+      const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+      g.setAttribute('class','graph-node');
+      g.setAttribute('transform',`translate(${p.x},${p.y})`);
+      const circle = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      circle.setAttribute('r', p.r);
+      circle.setAttribute('fill', colors[n.c % colors.length]);
+      if(n.tag) circle.setAttribute('stroke-dasharray','4 3');
+      g.appendChild(circle);
+      if (p.r > 8) {
+        const label = document.createElementNS('http://www.w3.org/2000/svg','text');
+        label.setAttribute('y', p.r + 11);
+        label.setAttribute('text-anchor','middle');
+        label.textContent = n.t.length > 12 ? n.t.slice(0,11)+'…' : n.t;
+        g.appendChild(label);
+      }
+      const title = document.createElementNS('http://www.w3.org/2000/svg','title');
+      title.textContent = `${n.t}\nDegree ${n.d} · PageRank ${Math.round(n.pr*100)}`;
+      g.appendChild(title);
+      svg.appendChild(g);
+    });
+  }
+</script>
