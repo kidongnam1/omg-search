@@ -1,9 +1,19 @@
-import { Notice, TFile } from 'obsidian';
-import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
-import { existsSync } from 'fs';
-import { homedir } from 'os';
-import { delimiter, isAbsolute, join } from 'path';
+import { Notice, TFile, Platform } from 'obsidian';
 import GeminiSyncPlugin from './main';
+
+type ChildProcessWithoutNullStreams = import('child_process').ChildProcessWithoutNullStreams;
+
+function requireDesktop() {
+	if (!Platform.isDesktopApp) throw new Error('This feature requires Obsidian desktop.');
+	return {
+		spawn: require('child_process').spawn as typeof import('child_process').spawn,
+		existsSync: require('fs').existsSync as typeof import('fs').existsSync,
+		homedir: require('os').homedir as typeof import('os').homedir,
+		delimiter: require('path').delimiter as string,
+		isAbsolute: require('path').isAbsolute as typeof import('path').isAbsolute,
+		join: require('path').join as typeof import('path').join,
+	};
+}
 
 export interface AgentRunResult {
 	content: string;
@@ -224,7 +234,7 @@ export class AgentService {
 	}
 
 	private async getWikiContext(prompt: string): Promise<string> {
-		if (!this.plugin.settings.wikiEnabled) return '';
+		if (!this.plugin.settings.wikiEnabled || !this.plugin.wikiService) return '';
 
 		try {
 			const contextPack = await this.plugin.wikiService.runContextPack(prompt, 6000);
@@ -351,6 +361,7 @@ export class AgentService {
 		logPath: string,
 		onChunk?: (chunk: string, stream: 'stdout' | 'stderr') => void
 	): Promise<{ stdout: string; stderr: string }> {
+		const { spawn } = requireDesktop();
 		return new Promise((resolve, reject) => {
 			let stdout = '';
 			let stderr = '';
@@ -474,6 +485,7 @@ export class AgentService {
 		const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 		const vaultPath = `${folder}/agent-${stamp}.jsonl`;
 		const agyVaultPath = `${folder}/agent-${stamp}.agy.log`;
+		const { join } = requireDesktop();
 		const agyAbsolutePath = join(this.plugin.getVaultPath(), agyVaultPath);
 		const initial = {
 			event: 'start',
@@ -531,6 +543,7 @@ export class AgentService {
 	}
 
 	private resolveCommand(command: string): string | null {
+		const { existsSync, homedir, delimiter, isAbsolute, join } = requireDesktop();
 		if (isAbsolute(command) || command.includes('/') || command.includes('\\')) {
 			return existsSync(command) ? command : null;
 		}
@@ -563,6 +576,7 @@ export class AgentService {
 	}
 
 	private getWindowsAgentSearchPaths(): string[] {
+		const { join } = requireDesktop();
 		const env = process.env;
 		const roots = [
 			env.LOCALAPPDATA,
@@ -593,13 +607,14 @@ export class AgentService {
 	}
 
 	private getMissingCommandMessage(command: string): string {
+		const home = Platform.isDesktopApp ? requireDesktop().homedir() : '~';
 		return [
 			`Could not find the Agent CLI command "${command}".`,
 			'If Obsidian was opened from Finder, Dock, or Start Menu, it may not inherit your shell PATH.',
 			'Open Settings > Master of Knowledge > Agent Workspace and click Auto-detect, or set Antigravity CLI Path to the full command path.',
 			process.platform === 'win32'
 				? 'On Windows it is often agy.exe in PATH, %LOCALAPPDATA%\\Programs\\Antigravity, or %APPDATA%\\npm.'
-				: `On macOS it is often: ${homedir()}/.local/bin/agy`
+				: `On macOS it is often: ${home}/.local/bin/agy`
 		].join('\n');
 	}
 }

@@ -323,7 +323,7 @@ export class GeminiSyncSettingTab extends PluginSettingTab {
 			.addButton(button => button
 				.setButtonText('Auto-detect')
 				.onClick(async () => {
-					const found = this.plugin.agentService.detectAgentCliPath();
+					const found = this.plugin.agentService?.detectAgentCliPath();
 					if (!found) {
 						new Notice('Could not find agy. Install Antigravity CLI or set the full path manually.');
 						return;
@@ -543,7 +543,7 @@ export class GeminiSyncSettingTab extends PluginSettingTab {
 			.addButton(button => button
 				.setButtonText('Auto-detect')
 				.onClick(async () => {
-					const found = this.plugin.wikiService.resolveCliPath();
+					const found = this.plugin.wikiService?.resolveCliPath();
 					if (!found) {
 						new Notice('obsidian-wiki not found. Install with: pip install obsidian-wiki');
 						return;
@@ -598,7 +598,8 @@ export class GeminiSyncSettingTab extends PluginSettingTab {
 					button.setButtonText('Setting up...');
 					button.setDisabled(true);
 					try {
-						const result = await this.plugin.wikiService.runSetup();
+						const result = await this.plugin.wikiService?.runSetup();
+						if (!result) { new Notice('Wiki service not available on mobile'); return; }
 						new Notice(result.ok ? (result.output || 'Wiki initialized') : (result.error || 'Setup failed'));
 					} catch (error) {
 						new Notice('Wiki setup failed. Check console for details.');

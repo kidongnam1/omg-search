@@ -1,9 +1,18 @@
-import { Notice, TFile, TFolder } from 'obsidian';
-import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
-import { existsSync } from 'fs';
-import { homedir } from 'os';
-import { delimiter, join } from 'path';
+import { Notice, TFile, TFolder, Platform } from 'obsidian';
 import GeminiSyncPlugin from './main';
+
+type ChildProcessWithoutNullStreams = import('child_process').ChildProcessWithoutNullStreams;
+
+function requireDesktop() {
+	if (!Platform.isDesktopApp) throw new Error('This feature requires Obsidian desktop.');
+	return {
+		spawn: require('child_process').spawn as typeof import('child_process').spawn,
+		existsSync: require('fs').existsSync as typeof import('fs').existsSync,
+		homedir: require('os').homedir as typeof import('os').homedir,
+		delimiter: require('path').delimiter as string,
+		join: require('path').join as typeof import('path').join,
+	};
+}
 
 export interface WikiStatusResult {
 	installed: boolean;
@@ -85,6 +94,7 @@ export class WikiService {
 	}
 
 	resolveCliPath(): string | null {
+		const { existsSync, homedir, delimiter, join } = requireDesktop();
 		const configured = this.plugin.settings.wikiCliPath?.trim();
 		if (configured && configured !== 'obsidian-wiki') {
 			if (existsSync(configured)) return configured;
@@ -556,6 +566,7 @@ export class WikiService {
 		extraEnv?: Record<string, string>,
 		onChunk?: (chunk: string) => void,
 	): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+		const { spawn } = requireDesktop();
 		return new Promise((resolve, reject) => {
 			const env = { ...process.env, ...extraEnv };
 			const child = spawn(command, args, {

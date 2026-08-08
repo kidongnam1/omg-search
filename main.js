@@ -233,7 +233,8 @@ var GeminiSyncSettingTab = class extends import_obsidian.PluginSettingTab {
     );
     new import_obsidian.Setting(containerEl).setName("Find Antigravity CLI").setDesc("Auto-detect agy from PATH and common macOS/Windows install locations.").addButton(
       (button) => button.setButtonText("Auto-detect").onClick(async () => {
-        const found = this.plugin.agentService.detectAgentCliPath();
+        var _a;
+        const found = (_a = this.plugin.agentService) == null ? void 0 : _a.detectAgentCliPath();
         if (!found) {
           new import_obsidian.Notice("Could not find agy. Install Antigravity CLI or set the full path manually.");
           return;
@@ -375,7 +376,8 @@ var GeminiSyncSettingTab = class extends import_obsidian.PluginSettingTab {
       })
     ).addButton(
       (button) => button.setButtonText("Auto-detect").onClick(async () => {
-        const found = this.plugin.wikiService.resolveCliPath();
+        var _a;
+        const found = (_a = this.plugin.wikiService) == null ? void 0 : _a.resolveCliPath();
         if (!found) {
           new import_obsidian.Notice("obsidian-wiki not found. Install with: pip install obsidian-wiki");
           return;
@@ -406,10 +408,15 @@ var GeminiSyncSettingTab = class extends import_obsidian.PluginSettingTab {
     );
     new import_obsidian.Setting(containerEl).setName("Initialize Wiki Vault").setDesc("Run obsidian-wiki setup to create the vault structure (index.md, categories, manifest).").addButton(
       (button) => button.setButtonText("Setup Wiki").onClick(async () => {
+        var _a;
         button.setButtonText("Setting up...");
         button.setDisabled(true);
         try {
-          const result = await this.plugin.wikiService.runSetup();
+          const result = await ((_a = this.plugin.wikiService) == null ? void 0 : _a.runSetup());
+          if (!result) {
+            new import_obsidian.Notice("Wiki service not available on mobile");
+            return;
+          }
           new import_obsidian.Notice(result.ok ? result.output || "Wiki initialized" : result.error || "Setup failed");
         } catch (error) {
           new import_obsidian.Notice("Wiki setup failed. Check console for details.");
@@ -3420,6 +3427,10 @@ var ChatView = class extends import_obsidian4.ItemView {
     this.dashboardContentEl.empty();
     this.welcomeEl = null;
     if (this.activeTab === "wiki") {
+      if (!import_obsidian4.Platform.isDesktopApp) {
+        this.renderMobileUnavailable("Wiki", "Wiki features require the obsidian-wiki CLI, which is only available on desktop.");
+        return;
+      }
       this.renderWikiTab();
       return;
     }
@@ -3437,6 +3448,10 @@ var ChatView = class extends import_obsidian4.ItemView {
     }
     if (this.activeTab === "settings") {
       this.renderSettingsTab();
+      return;
+    }
+    if (this.activeTab === "agent" && !import_obsidian4.Platform.isDesktopApp) {
+      this.renderMobileUnavailable("Agent", "Agent features require a CLI tool, which is only available on desktop.");
       return;
     }
     this.renderConversationToolbar();
@@ -3548,6 +3563,12 @@ var ChatView = class extends import_obsidian4.ItemView {
         this.wikiCollapsedSections.add(id);
     });
     return { header, content };
+  }
+  renderMobileUnavailable(tabName, detail) {
+    const panel = this.dashboardContentEl.createDiv({ cls: "mok-panel" });
+    panel.createEl("h3", { text: `${tabName} \u2014 Desktop Only` });
+    panel.createEl("p", { text: detail });
+    panel.createEl("p", { text: "Use the Chat tab to search your synced notes and create reports from mobile." });
   }
   renderWikiTab() {
     const panel = this.dashboardContentEl.createDiv({ cls: "mok-panel mok-wiki-panel" });
@@ -5246,11 +5267,15 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
     }
   }
   stopAgentRun() {
-    const stopped = this.plugin.agentService.stop();
+    var _a;
+    const stopped = (_a = this.plugin.agentService) == null ? void 0 : _a.stop();
     new import_obsidian4.Notice(stopped ? "Agent run stopped." : "No active Agent run to stop.");
   }
   async runAgentMessage(text, onChunk) {
     var _a;
+    if (!this.plugin.agentService) {
+      return { role: "model", content: "Agent is only available on desktop." };
+    }
     const result = await this.plugin.agentService.run(text, onChunk);
     const contextLine = result.contextStats ? [
       `Knowledge context: ${result.contextStats.totalSyncedNotes} synced notes available; `,
@@ -5813,10 +5838,18 @@ ${content}`;
 
 // src/agent-service.ts
 var import_obsidian5 = require("obsidian");
-var import_child_process = require("child_process");
-var import_fs = require("fs");
-var import_os = require("os");
-var import_path = require("path");
+function requireDesktop() {
+  if (!import_obsidian5.Platform.isDesktopApp)
+    throw new Error("This feature requires Obsidian desktop.");
+  return {
+    spawn: require("child_process").spawn,
+    existsSync: require("fs").existsSync,
+    homedir: require("os").homedir,
+    delimiter: require("path").delimiter,
+    isAbsolute: require("path").isAbsolute,
+    join: require("path").join
+  };
+}
 var AgentService = class {
   constructor(plugin) {
     this.plugin = plugin;
@@ -6007,7 +6040,7 @@ ${activeNoteContent}` : "",
     }
   }
   async getWikiContext(prompt) {
-    if (!this.plugin.settings.wikiEnabled)
+    if (!this.plugin.settings.wikiEnabled || !this.plugin.wikiService)
       return "";
     try {
       const contextPack = await this.plugin.wikiService.runContextPack(prompt, 6e3);
@@ -6157,6 +6190,7 @@ ${content.slice(0, 4e3)}`.toLowerCase();
     return Array.from(tokens);
   }
   exec(command, args, logPath, onChunk) {
+    const { spawn } = requireDesktop();
     return new Promise((resolve, reject) => {
       var _a, _b, _c;
       let stdout = "";
@@ -6164,7 +6198,7 @@ ${content.slice(0, 4e3)}`.toLowerCase();
       let settled = false;
       const maxBuffer = 1024 * 1024 * 8;
       const timeoutMs = Math.max(3e4, this.plugin.settings.agentTimeoutSeconds * 1e3);
-      const child = (0, import_child_process.spawn)(command, args, {
+      const child = spawn(command, args, {
         cwd: this.plugin.getVaultPath(),
         env: {
           ...process.env,
@@ -6280,7 +6314,8 @@ ${content.slice(0, 4e3)}`.toLowerCase();
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const vaultPath = `${folder}/agent-${stamp}.jsonl`;
     const agyVaultPath = `${folder}/agent-${stamp}.agy.log`;
-    const agyAbsolutePath = (0, import_path.join)(this.plugin.getVaultPath(), agyVaultPath);
+    const { join } = requireDesktop();
+    const agyAbsolutePath = join(this.plugin.getVaultPath(), agyVaultPath);
     const initial = {
       event: "start",
       timestamp: new Date().toISOString(),
@@ -6336,16 +6371,17 @@ ${content.slice(0, 4e3)}`.toLowerCase();
     return this.resolveCommand("agy");
   }
   resolveCommand(command) {
-    if ((0, import_path.isAbsolute)(command) || command.includes("/") || command.includes("\\")) {
-      return (0, import_fs.existsSync)(command) ? command : null;
+    const { existsSync, homedir, delimiter, isAbsolute, join } = requireDesktop();
+    if (isAbsolute(command) || command.includes("/") || command.includes("\\")) {
+      return existsSync(command) ? command : null;
     }
     const paths = Array.from(new Set([
-      ...(process.env.PATH || "").split(import_path.delimiter),
-      (0, import_path.join)((0, import_os.homedir)(), ".local", "bin"),
-      (0, import_path.join)((0, import_os.homedir)(), ".antigravity", "antigravity", "bin"),
-      (0, import_path.join)((0, import_os.homedir)(), ".antigravity-ide", "antigravity-ide", "bin"),
-      (0, import_path.join)((0, import_os.homedir)(), ".antigravity", "bin"),
-      (0, import_path.join)((0, import_os.homedir)(), ".antigravity-ide", "bin"),
+      ...(process.env.PATH || "").split(delimiter),
+      join(homedir(), ".local", "bin"),
+      join(homedir(), ".antigravity", "antigravity", "bin"),
+      join(homedir(), ".antigravity-ide", "antigravity-ide", "bin"),
+      join(homedir(), ".antigravity", "bin"),
+      join(homedir(), ".antigravity-ide", "bin"),
       ...process.platform === "win32" ? this.getWindowsAgentSearchPaths() : [],
       "/opt/homebrew/bin",
       "/usr/local/bin",
@@ -6355,14 +6391,15 @@ ${content.slice(0, 4e3)}`.toLowerCase();
     const extensions = process.platform === "win32" ? Array.from(/* @__PURE__ */ new Set(["", ...(process.env.PATHEXT || ".EXE;.CMD;.BAT").split(";")])).map((ext) => ext.toLowerCase()) : [""];
     for (const dir of paths) {
       for (const ext of extensions) {
-        const candidate = (0, import_path.join)(dir, `${command}${ext}`);
-        if ((0, import_fs.existsSync)(candidate))
+        const candidate = join(dir, `${command}${ext}`);
+        if (existsSync(candidate))
           return candidate;
       }
     }
     return null;
   }
   getWindowsAgentSearchPaths() {
+    const { join } = requireDesktop();
     const env = process.env;
     const roots = [
       env.LOCALAPPDATA,
@@ -6384,27 +6421,35 @@ ${content.slice(0, 4e3)}`.toLowerCase();
     const paths = [];
     for (const root of roots) {
       for (const suffix of suffixes) {
-        paths.push((0, import_path.join)(root, ...suffix));
+        paths.push(join(root, ...suffix));
       }
     }
     return paths;
   }
   getMissingCommandMessage(command) {
+    const home = import_obsidian5.Platform.isDesktopApp ? requireDesktop().homedir() : "~";
     return [
       `Could not find the Agent CLI command "${command}".`,
       "If Obsidian was opened from Finder, Dock, or Start Menu, it may not inherit your shell PATH.",
       "Open Settings > Master of Knowledge > Agent Workspace and click Auto-detect, or set Antigravity CLI Path to the full command path.",
-      process.platform === "win32" ? "On Windows it is often agy.exe in PATH, %LOCALAPPDATA%\\Programs\\Antigravity, or %APPDATA%\\npm." : `On macOS it is often: ${(0, import_os.homedir)()}/.local/bin/agy`
+      process.platform === "win32" ? "On Windows it is often agy.exe in PATH, %LOCALAPPDATA%\\Programs\\Antigravity, or %APPDATA%\\npm." : `On macOS it is often: ${home}/.local/bin/agy`
     ].join("\n");
   }
 };
 
 // src/wiki-service.ts
 var import_obsidian6 = require("obsidian");
-var import_child_process2 = require("child_process");
-var import_fs2 = require("fs");
-var import_os2 = require("os");
-var import_path2 = require("path");
+function requireDesktop2() {
+  if (!import_obsidian6.Platform.isDesktopApp)
+    throw new Error("This feature requires Obsidian desktop.");
+  return {
+    spawn: require("child_process").spawn,
+    existsSync: require("fs").existsSync,
+    homedir: require("os").homedir,
+    delimiter: require("path").delimiter,
+    join: require("path").join
+  };
+}
 var WikiService = class {
   constructor(plugin) {
     this.plugin = plugin;
@@ -6419,33 +6464,34 @@ var WikiService = class {
   }
   resolveCliPath() {
     var _a;
+    const { existsSync, homedir, delimiter, join } = requireDesktop2();
     const configured = (_a = this.plugin.settings.wikiCliPath) == null ? void 0 : _a.trim();
     if (configured && configured !== "obsidian-wiki") {
-      if ((0, import_fs2.existsSync)(configured))
+      if (existsSync(configured))
         return configured;
     }
     const candidates = [
-      (0, import_path2.join)((0, import_os2.homedir)(), ".local", "bin", "obsidian-wiki"),
-      (0, import_path2.join)((0, import_os2.homedir)(), ".cargo", "bin", "obsidian-wiki"),
+      join(homedir(), ".local", "bin", "obsidian-wiki"),
+      join(homedir(), ".cargo", "bin", "obsidian-wiki"),
       "/usr/local/bin/obsidian-wiki",
       "/opt/homebrew/bin/obsidian-wiki"
     ];
     if (process.platform === "win32") {
-      const localAppData = process.env.LOCALAPPDATA || (0, import_path2.join)((0, import_os2.homedir)(), "AppData", "Local");
+      const localAppData = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
       candidates.push(
-        (0, import_path2.join)(localAppData, "Programs", "Python", "Scripts", "obsidian-wiki.exe"),
-        (0, import_path2.join)((0, import_os2.homedir)(), "AppData", "Roaming", "Python", "Scripts", "obsidian-wiki.exe")
+        join(localAppData, "Programs", "Python", "Scripts", "obsidian-wiki.exe"),
+        join(homedir(), "AppData", "Roaming", "Python", "Scripts", "obsidian-wiki.exe")
       );
     }
-    const pathDirs = (process.env.PATH || "").split(import_path2.delimiter);
+    const pathDirs = (process.env.PATH || "").split(delimiter);
     const exe = process.platform === "win32" ? "obsidian-wiki.exe" : "obsidian-wiki";
     for (const dir of pathDirs) {
-      const full = (0, import_path2.join)(dir, exe);
-      if ((0, import_fs2.existsSync)(full))
+      const full = join(dir, exe);
+      if (existsSync(full))
         return full;
     }
     for (const c of candidates) {
-      if ((0, import_fs2.existsSync)(c))
+      if (existsSync(c))
         return c;
     }
     return null;
@@ -6844,9 +6890,10 @@ var WikiService = class {
   }
   // ── Process execution ───────────────────────────────────────────────
   async exec(command, args, timeout = 3e4, extraEnv, onChunk) {
+    const { spawn } = requireDesktop2();
     return new Promise((resolve, reject) => {
       const env = { ...process.env, ...extraEnv };
-      const child = (0, import_child_process2.spawn)(command, args, {
+      const child = spawn(command, args, {
         env,
         cwd: this.getWikiVaultPath() || void 0,
         timeout,
@@ -6878,13 +6925,20 @@ var WikiService = class {
 
 // src/main.ts
 var GeminiSyncPlugin = class extends import_obsidian7.Plugin {
+  constructor() {
+    super(...arguments);
+    this.agentService = null;
+    this.wikiService = null;
+  }
   async onload() {
     console.log("Loading Master of Knowledge Plugin");
     await this.loadSettings();
     this.geminiService = new GeminiService(this);
     this.syncEngine = new SyncEngine(this, this.geminiService);
-    this.agentService = new AgentService(this);
-    this.wikiService = new WikiService(this);
+    if (import_obsidian7.Platform.isDesktopApp) {
+      this.agentService = new AgentService(this);
+      this.wikiService = new WikiService(this);
+    }
     await this.ensureDefaultWorkspaceFolders();
     await this.reconcileBudgetFromLog();
     this.registerView(
@@ -6923,82 +6977,84 @@ var GeminiSyncPlugin = class extends import_obsidian7.Plugin {
         this.activateChatView("wiki");
       }
     });
-    this.addCommand({
-      id: "wiki-lint",
-      name: "Wiki Lint",
-      callback: async () => {
-        if (!this.settings.wikiEnabled) {
-          new import_obsidian7.Notice("Enable Wiki integration in settings first");
-          return;
+    if (import_obsidian7.Platform.isDesktopApp) {
+      this.addCommand({
+        id: "wiki-lint",
+        name: "Wiki Lint",
+        callback: async () => {
+          if (!this.settings.wikiEnabled) {
+            new import_obsidian7.Notice("Enable Wiki integration in settings first");
+            return;
+          }
+          const result = await this.wikiService.runLint();
+          new import_obsidian7.Notice(result.ok ? `Wiki lint passed: ${result.summary}` : `Wiki lint: ${result.summary}`);
         }
-        const result = await this.wikiService.runLint();
-        new import_obsidian7.Notice(result.ok ? `Wiki lint passed: ${result.summary}` : `Wiki lint: ${result.summary}`);
-      }
-    });
-    this.addCommand({
-      id: "wiki-setup",
-      name: "Wiki Setup",
-      callback: async () => {
-        if (!this.settings.wikiEnabled) {
-          new import_obsidian7.Notice("Enable Wiki integration in settings first");
-          return;
+      });
+      this.addCommand({
+        id: "wiki-setup",
+        name: "Wiki Setup",
+        callback: async () => {
+          if (!this.settings.wikiEnabled) {
+            new import_obsidian7.Notice("Enable Wiki integration in settings first");
+            return;
+          }
+          const result = await this.wikiService.runSetup();
+          new import_obsidian7.Notice(result.ok ? "Wiki vault initialized" : result.error || "Setup failed");
         }
-        const result = await this.wikiService.runSetup();
-        new import_obsidian7.Notice(result.ok ? "Wiki vault initialized" : result.error || "Setup failed");
-      }
-    });
-    this.addCommand({
-      id: "wiki-sync",
-      name: "Wiki Sync",
-      callback: async () => {
-        if (!this.settings.wikiEnabled) {
-          new import_obsidian7.Notice("Enable Wiki integration in settings first");
-          return;
+      });
+      this.addCommand({
+        id: "wiki-sync",
+        name: "Wiki Sync",
+        callback: async () => {
+          if (!this.settings.wikiEnabled) {
+            new import_obsidian7.Notice("Enable Wiki integration in settings first");
+            return;
+          }
+          const result = await this.wikiService.runSync();
+          new import_obsidian7.Notice(result.ok ? "Wiki synced" : result.error || "Sync failed");
         }
-        const result = await this.wikiService.runSync();
-        new import_obsidian7.Notice(result.ok ? "Wiki synced" : result.error || "Sync failed");
-      }
-    });
-    this.addCommand({
-      id: "wiki-cross-linker",
-      name: "Wiki Cross-linker",
-      callback: async () => {
-        if (!this.settings.wikiEnabled) {
-          new import_obsidian7.Notice("Enable Wiki integration in settings first");
-          return;
+      });
+      this.addCommand({
+        id: "wiki-cross-linker",
+        name: "Wiki Cross-linker",
+        callback: async () => {
+          if (!this.settings.wikiEnabled) {
+            new import_obsidian7.Notice("Enable Wiki integration in settings first");
+            return;
+          }
+          const result = await this.wikiService.runCrossLinker();
+          new import_obsidian7.Notice(result.ok ? "Cross-linking complete" : result.error || "Cross-linker failed");
         }
-        const result = await this.wikiService.runCrossLinker();
-        new import_obsidian7.Notice(result.ok ? "Cross-linking complete" : result.error || "Cross-linker failed");
-      }
-    });
-    this.addCommand({
-      id: "wiki-sessions-build",
-      name: "Wiki Sessions Build",
-      callback: async () => {
-        if (!this.settings.wikiEnabled) {
-          new import_obsidian7.Notice("Enable Wiki integration in settings first");
-          return;
+      });
+      this.addCommand({
+        id: "wiki-sessions-build",
+        name: "Wiki Sessions Build",
+        callback: async () => {
+          if (!this.settings.wikiEnabled) {
+            new import_obsidian7.Notice("Enable Wiki integration in settings first");
+            return;
+          }
+          const result = await this.wikiService.runSessionsBuild();
+          new import_obsidian7.Notice(result.ok ? "Session brain built" : result.error || "Sessions build failed");
         }
-        const result = await this.wikiService.runSessionsBuild();
-        new import_obsidian7.Notice(result.ok ? "Session brain built" : result.error || "Sessions build failed");
-      }
-    });
-    this.addCommand({
-      id: "wiki-export",
-      name: "Wiki Graph Export",
-      callback: async () => {
-        if (!this.settings.wikiEnabled) {
-          new import_obsidian7.Notice("Enable Wiki integration in settings first");
-          return;
+      });
+      this.addCommand({
+        id: "wiki-export",
+        name: "Wiki Graph Export",
+        callback: async () => {
+          if (!this.settings.wikiEnabled) {
+            new import_obsidian7.Notice("Enable Wiki integration in settings first");
+            return;
+          }
+          const result = await this.wikiService.runExport("json");
+          if (result.ok) {
+            new import_obsidian7.Notice("Wiki graph exported");
+          } else {
+            new import_obsidian7.Notice(result.error || "Export failed");
+          }
         }
-        const result = await this.wikiService.runExport("json");
-        if (result.ok) {
-          new import_obsidian7.Notice("Wiki graph exported");
-        } else {
-          new import_obsidian7.Notice(result.error || "Export failed");
-        }
-      }
-    });
+      });
+    }
     if (this.settings.apiKey && this.settings.syncFolders.length > 0) {
       setTimeout(() => {
         this.syncEngine.initialSync();

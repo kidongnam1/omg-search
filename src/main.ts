@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, TFile, TAbstractFile, Notice } from 'obsidian';
+import { Plugin, WorkspaceLeaf, TFile, TAbstractFile, Notice, Platform } from 'obsidian';
 import { GeminiSyncSettings, DEFAULT_SETTINGS, GeminiSyncSettingTab } from './settings';
 import { GeminiService } from './gemini-service';
 import { SyncEngine } from './sync-engine';
@@ -19,8 +19,8 @@ export default class GeminiSyncPlugin extends Plugin {
 	settings: GeminiSyncSettings;
 	geminiService: GeminiService;
 	syncEngine: SyncEngine;
-	agentService: AgentService;
-	wikiService: WikiService;
+	agentService: AgentService | null = null;
+	wikiService: WikiService | null = null;
 	statusBarItem: HTMLElement;
 
 	async onload() {
@@ -32,8 +32,10 @@ export default class GeminiSyncPlugin extends Plugin {
 		// Initialize services
 		this.geminiService = new GeminiService(this);
 		this.syncEngine = new SyncEngine(this, this.geminiService);
-		this.agentService = new AgentService(this);
-		this.wikiService = new WikiService(this);
+		if (Platform.isDesktopApp) {
+			this.agentService = new AgentService(this);
+			this.wikiService = new WikiService(this);
+		}
 		await this.ensureDefaultWorkspaceFolders();
 		await this.reconcileBudgetFromLog();
 
@@ -81,7 +83,7 @@ export default class GeminiSyncPlugin extends Plugin {
 			}
 		});
 
-		// Add command for wiki query
+		// Add command for wiki query (available on all platforms, tab shows mobile message)
 		this.addCommand({
 			id: 'wiki-query',
 			name: 'Wiki Query',
@@ -90,93 +92,90 @@ export default class GeminiSyncPlugin extends Plugin {
 			}
 		});
 
-		// Add command for wiki lint
-		this.addCommand({
-			id: 'wiki-lint',
-			name: 'Wiki Lint',
-			callback: async () => {
-				if (!this.settings.wikiEnabled) {
-					new Notice('Enable Wiki integration in settings first');
-					return;
+		// Desktop-only wiki commands
+		if (Platform.isDesktopApp) {
+			this.addCommand({
+				id: 'wiki-lint',
+				name: 'Wiki Lint',
+				callback: async () => {
+					if (!this.settings.wikiEnabled) {
+						new Notice('Enable Wiki integration in settings first');
+						return;
+					}
+					const result = await this.wikiService!.runLint();
+					new Notice(result.ok ? `Wiki lint passed: ${result.summary}` : `Wiki lint: ${result.summary}`);
 				}
-				const result = await this.wikiService.runLint();
-				new Notice(result.ok ? `Wiki lint passed: ${result.summary}` : `Wiki lint: ${result.summary}`);
-			}
-		});
+			});
 
-		// Add command for wiki setup
-		this.addCommand({
-			id: 'wiki-setup',
-			name: 'Wiki Setup',
-			callback: async () => {
-				if (!this.settings.wikiEnabled) {
-					new Notice('Enable Wiki integration in settings first');
-					return;
+			this.addCommand({
+				id: 'wiki-setup',
+				name: 'Wiki Setup',
+				callback: async () => {
+					if (!this.settings.wikiEnabled) {
+						new Notice('Enable Wiki integration in settings first');
+						return;
+					}
+					const result = await this.wikiService!.runSetup();
+					new Notice(result.ok ? 'Wiki vault initialized' : (result.error || 'Setup failed'));
 				}
-				const result = await this.wikiService.runSetup();
-				new Notice(result.ok ? 'Wiki vault initialized' : (result.error || 'Setup failed'));
-			}
-		});
+			});
 
-		// Add command for wiki sync
-		this.addCommand({
-			id: 'wiki-sync',
-			name: 'Wiki Sync',
-			callback: async () => {
-				if (!this.settings.wikiEnabled) {
-					new Notice('Enable Wiki integration in settings first');
-					return;
+			this.addCommand({
+				id: 'wiki-sync',
+				name: 'Wiki Sync',
+				callback: async () => {
+					if (!this.settings.wikiEnabled) {
+						new Notice('Enable Wiki integration in settings first');
+						return;
+					}
+					const result = await this.wikiService!.runSync();
+					new Notice(result.ok ? 'Wiki synced' : (result.error || 'Sync failed'));
 				}
-				const result = await this.wikiService.runSync();
-				new Notice(result.ok ? 'Wiki synced' : (result.error || 'Sync failed'));
-			}
-		});
+			});
 
-		// Add command for wiki cross-linker
-		this.addCommand({
-			id: 'wiki-cross-linker',
-			name: 'Wiki Cross-linker',
-			callback: async () => {
-				if (!this.settings.wikiEnabled) {
-					new Notice('Enable Wiki integration in settings first');
-					return;
+			this.addCommand({
+				id: 'wiki-cross-linker',
+				name: 'Wiki Cross-linker',
+				callback: async () => {
+					if (!this.settings.wikiEnabled) {
+						new Notice('Enable Wiki integration in settings first');
+						return;
+					}
+					const result = await this.wikiService!.runCrossLinker();
+					new Notice(result.ok ? 'Cross-linking complete' : (result.error || 'Cross-linker failed'));
 				}
-				const result = await this.wikiService.runCrossLinker();
-				new Notice(result.ok ? 'Cross-linking complete' : (result.error || 'Cross-linker failed'));
-			}
-		});
+			});
 
-		// Add command for wiki sessions build
-		this.addCommand({
-			id: 'wiki-sessions-build',
-			name: 'Wiki Sessions Build',
-			callback: async () => {
-				if (!this.settings.wikiEnabled) {
-					new Notice('Enable Wiki integration in settings first');
-					return;
+			this.addCommand({
+				id: 'wiki-sessions-build',
+				name: 'Wiki Sessions Build',
+				callback: async () => {
+					if (!this.settings.wikiEnabled) {
+						new Notice('Enable Wiki integration in settings first');
+						return;
+					}
+					const result = await this.wikiService!.runSessionsBuild();
+					new Notice(result.ok ? 'Session brain built' : (result.error || 'Sessions build failed'));
 				}
-				const result = await this.wikiService.runSessionsBuild();
-				new Notice(result.ok ? 'Session brain built' : (result.error || 'Sessions build failed'));
-			}
-		});
+			});
 
-		// Add command for wiki export
-		this.addCommand({
-			id: 'wiki-export',
-			name: 'Wiki Graph Export',
-			callback: async () => {
-				if (!this.settings.wikiEnabled) {
-					new Notice('Enable Wiki integration in settings first');
-					return;
+			this.addCommand({
+				id: 'wiki-export',
+				name: 'Wiki Graph Export',
+				callback: async () => {
+					if (!this.settings.wikiEnabled) {
+						new Notice('Enable Wiki integration in settings first');
+						return;
+					}
+					const result = await this.wikiService!.runExport('json');
+					if (result.ok) {
+						new Notice('Wiki graph exported');
+					} else {
+						new Notice(result.error || 'Export failed');
+					}
 				}
-				const result = await this.wikiService.runExport('json');
-				if (result.ok) {
-					new Notice('Wiki graph exported');
-				} else {
-					new Notice(result.error || 'Export failed');
-				}
-			}
-		});
+			});
+		}
 
 		// Initial sync on load (if configured)
 		if (this.settings.apiKey && this.settings.syncFolders.length > 0) {

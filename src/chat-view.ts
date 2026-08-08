@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, MarkdownRenderer, Notice, TFile, Modal, FuzzySuggestModal, App } from 'obsidian';
+import { ItemView, WorkspaceLeaf, MarkdownRenderer, Notice, TFile, Modal, FuzzySuggestModal, App, Platform } from 'obsidian';
 import GeminiSyncPlugin from './main';
 import { ChatMessage, Citation } from './gemini-service';
 
@@ -185,6 +185,10 @@ export class ChatView extends ItemView {
 		this.welcomeEl = null;
 
 		if (this.activeTab === 'wiki') {
+			if (!Platform.isDesktopApp) {
+				this.renderMobileUnavailable('Wiki', 'Wiki features require the obsidian-wiki CLI, which is only available on desktop.');
+				return;
+			}
 			this.renderWikiTab();
 			return;
 		}
@@ -206,6 +210,11 @@ export class ChatView extends ItemView {
 
 		if (this.activeTab === 'settings') {
 			this.renderSettingsTab();
+			return;
+		}
+
+		if (this.activeTab === 'agent' && !Platform.isDesktopApp) {
+			this.renderMobileUnavailable('Agent', 'Agent features require a CLI tool, which is only available on desktop.');
 			return;
 		}
 
@@ -335,6 +344,13 @@ export class ChatView extends ItemView {
 		return { header, content };
 	}
 
+	private renderMobileUnavailable(tabName: string, detail: string) {
+		const panel = this.dashboardContentEl.createDiv({ cls: 'mok-panel' });
+		panel.createEl('h3', { text: `${tabName} — Desktop Only` });
+		panel.createEl('p', { text: detail });
+		panel.createEl('p', { text: 'Use the Chat tab to search your synced notes and create reports from mobile.' });
+	}
+
 	private renderWikiTab() {
 		const panel = this.dashboardContentEl.createDiv({ cls: 'mok-panel mok-wiki-panel' });
 
@@ -344,7 +360,7 @@ export class ChatView extends ItemView {
 		const statusContent = statusSection.createDiv({ cls: 'mok-wiki-status-content' });
 		statusContent.createEl('p', { text: 'Checking wiki status...' });
 
-		this.plugin.wikiService.checkInstallation().then(status => {
+		this.plugin.wikiService!.checkInstallation().then(status => {
 			statusContent.empty();
 			if (!status.installed) {
 				statusContent.createEl('p', { cls: 'mok-wiki-error', text: status.error || 'obsidian-wiki CLI not found' });
@@ -372,7 +388,7 @@ export class ChatView extends ItemView {
 				setupBtn.addEventListener('click', async () => {
 					setupBtn.setText('Setting up...');
 					setupBtn.setAttr('disabled', 'true');
-					const result = await this.plugin.wikiService.runSetup();
+					const result = await this.plugin.wikiService!.runSetup();
 					new Notice(result.output || result.error || 'Setup complete');
 					setupBtn.removeAttribute('disabled');
 					setupBtn.setText('Initialize Wiki Vault');
@@ -463,7 +479,7 @@ export class ChatView extends ItemView {
 			lintBtn.setAttr('disabled', 'true');
 			lintResultEl.empty();
 
-			const result = await this.plugin.wikiService.runLint();
+			const result = await this.plugin.wikiService!.runLint();
 			lintResultEl.empty();
 
 			if (result.error) {
@@ -498,7 +514,7 @@ export class ChatView extends ItemView {
 		const stagingList = stagingSection.createDiv({ cls: 'mok-wiki-staging-list' });
 		stagingList.createEl('p', { text: 'Loading staged files...' });
 
-		this.plugin.wikiService.listStagedFiles().then(files => {
+		this.plugin.wikiService!.listStagedFiles().then(files => {
 			stagingList.empty();
 			if (files.length === 0) {
 				stagingList.createEl('p', { cls: 'mok-wiki-muted', text: 'No staged files.' });
@@ -520,7 +536,7 @@ export class ChatView extends ItemView {
 				approveBtn.addEventListener('click', async () => {
 					approveBtn.setText('Approving...');
 					approveBtn.setAttr('disabled', 'true');
-					const result = await this.plugin.wikiService.approveStagedFile(file.path);
+					const result = await this.plugin.wikiService!.approveStagedFile(file.path);
 					new Notice(result.ok ? result.output : (result.error || 'Approval failed'));
 					this.renderActiveTab();
 				});
@@ -528,7 +544,7 @@ export class ChatView extends ItemView {
 				rejectBtn.addEventListener('click', async () => {
 					rejectBtn.setText('Rejecting...');
 					rejectBtn.setAttr('disabled', 'true');
-					const result = await this.plugin.wikiService.rejectStagedFile(file.path);
+					const result = await this.plugin.wikiService!.rejectStagedFile(file.path);
 					new Notice(result.ok ? result.output : (result.error || 'Rejection failed'));
 					this.renderActiveTab();
 				});
@@ -542,10 +558,10 @@ export class ChatView extends ItemView {
 		const btnGrid = maintainSection.createDiv({ cls: 'mok-wiki-btn-grid' });
 
 		const ops: Array<{ label: string; action: () => Promise<any>; description: string }> = [
-			{ label: 'Cross-linker', action: () => this.plugin.wikiService.runCrossLinker(), description: 'Add missing [[wikilinks]] between related pages' },
-			{ label: 'Dedup', action: () => this.plugin.wikiService.runDedup(), description: 'Find and consolidate duplicate pages' },
-			{ label: 'Rebuild', action: () => this.plugin.wikiService.runRebuild(), description: 'Rebuild wiki index and manifest' },
-			{ label: 'Sync', action: () => this.plugin.wikiService.runSync(), description: 'Sync wiki state with vault changes' },
+			{ label: 'Cross-linker', action: () => this.plugin.wikiService!.runCrossLinker(), description: 'Add missing [[wikilinks]] between related pages' },
+			{ label: 'Dedup', action: () => this.plugin.wikiService!.runDedup(), description: 'Find and consolidate duplicate pages' },
+			{ label: 'Rebuild', action: () => this.plugin.wikiService!.runRebuild(), description: 'Rebuild wiki index and manifest' },
+			{ label: 'Sync', action: () => this.plugin.wikiService!.runSync(), description: 'Sync wiki state with vault changes' },
 		];
 
 		const resultEl = maintainSection.createDiv({ cls: 'mok-wiki-result-output' });
@@ -582,7 +598,7 @@ export class ChatView extends ItemView {
 			buildBtn.setText('Building...');
 			buildBtn.setAttr('disabled', 'true');
 			resultEl.empty();
-			const result = await this.plugin.wikiService.runSessionsBuild();
+			const result = await this.plugin.wikiService!.runSessionsBuild();
 			resultEl.empty();
 			if (result.error) resultEl.createEl('p', { cls: 'mok-wiki-error', text: result.error });
 			else resultEl.createEl('pre', { cls: 'mok-wiki-pre', text: result.output || 'Done.' });
@@ -595,7 +611,7 @@ export class ChatView extends ItemView {
 			clustersBtn.setText('Loading...');
 			clustersBtn.setAttr('disabled', 'true');
 			resultEl.empty();
-			const result = await this.plugin.wikiService.runSessionsClusters();
+			const result = await this.plugin.wikiService!.runSessionsClusters();
 			resultEl.empty();
 			if (result.error) resultEl.createEl('p', { cls: 'mok-wiki-error', text: result.error });
 			else resultEl.createEl('pre', { cls: 'mok-wiki-pre', text: result.output || 'No clusters found.' });
@@ -617,7 +633,7 @@ export class ChatView extends ItemView {
 			sessionQueryBtn.setText('Querying...');
 			sessionQueryBtn.setAttr('disabled', 'true');
 			resultEl.empty();
-			const result = await this.plugin.wikiService.runSessionsQuery(query);
+			const result = await this.plugin.wikiService!.runSessionsQuery(query);
 			resultEl.empty();
 			if (result.error) resultEl.createEl('p', { cls: 'mok-wiki-error', text: result.error });
 			else {
@@ -642,7 +658,7 @@ export class ChatView extends ItemView {
 		const trustTable = trustSection.createDiv({ cls: 'mok-wiki-trust-table' });
 		trustTable.createEl('p', { text: 'Loading trust ledger...' });
 
-		this.plugin.wikiService.readTrustLedger().then(entries => {
+		this.plugin.wikiService!.readTrustLedger().then(entries => {
 			trustTable.empty();
 			if (entries.length === 0) {
 				trustTable.createEl('p', { cls: 'mok-wiki-muted', text: 'No trust entries yet. Run trust-check on wiki pages to populate.' });
@@ -690,7 +706,7 @@ export class ChatView extends ItemView {
 			trustCheckBtn.setText('Checking...');
 			trustCheckBtn.setAttr('disabled', 'true');
 			resultEl.empty();
-			const result = await this.plugin.wikiService.runTrustCheck(page);
+			const result = await this.plugin.wikiService!.runTrustCheck(page);
 			resultEl.empty();
 			if (result.error) resultEl.createEl('p', { cls: 'mok-wiki-error', text: result.error });
 			else resultEl.createEl('pre', { cls: 'mok-wiki-pre', text: result.output || 'Done.' });
@@ -708,7 +724,7 @@ export class ChatView extends ItemView {
 			trustRecordBtn.setText('Recording...');
 			trustRecordBtn.setAttr('disabled', 'true');
 			resultEl.empty();
-			const result = await this.plugin.wikiService.runTrustRecord(page);
+			const result = await this.plugin.wikiService!.runTrustRecord(page);
 			resultEl.empty();
 			if (result.error) resultEl.createEl('p', { cls: 'mok-wiki-error', text: result.error });
 			else resultEl.createEl('pre', { cls: 'mok-wiki-pre', text: result.output || 'Trust recorded.' });
@@ -737,7 +753,7 @@ export class ChatView extends ItemView {
 				btn.setText(`${fmt.label}...`);
 				btn.setAttr('disabled', 'true');
 				resultEl.empty();
-				const result = await this.plugin.wikiService.runExport(fmt.id);
+				const result = await this.plugin.wikiService!.runExport(fmt.id);
 				resultEl.empty();
 				if (result.error) {
 					resultEl.createEl('p', { cls: 'mok-wiki-error', text: result.error });
@@ -759,7 +775,7 @@ export class ChatView extends ItemView {
 		const manifestContent = manifestSection.createDiv({ cls: 'mok-wiki-manifest-content' });
 		manifestContent.createEl('p', { text: 'Loading manifest...' });
 
-		this.plugin.wikiService.readManifest().then(entries => {
+		this.plugin.wikiService!.readManifest().then(entries => {
 			manifestContent.empty();
 			if (entries.length === 0) {
 				manifestContent.createEl('p', { cls: 'mok-wiki-muted', text: 'No manifest found. Run setup or sync first.' });
@@ -811,7 +827,7 @@ export class ChatView extends ItemView {
 					await this.app.workspace.openLinkText(file.name, '', true);
 				} else {
 					resultEl.empty();
-					const content = await this.plugin.wikiService.readSpecialFile(file.name);
+					const content = await this.plugin.wikiService!.readSpecialFile(file.name);
 					if (content) {
 						const bodyEl = resultEl.createDiv({ cls: 'mok-wiki-msg-body' });
 						this.renderWikiMessageContent(bodyEl, content.slice(0, 3000));
@@ -843,7 +859,7 @@ export class ChatView extends ItemView {
 		loadingEl.createDiv({ cls: 'mok-wiki-msg-body', text: 'Searching...' });
 		messagesEl.scrollTop = messagesEl.scrollHeight;
 
-		const result = await this.plugin.wikiService.runQuery(query);
+		const result = await this.plugin.wikiService!.runQuery(query);
 
 		loadingEl.remove();
 
@@ -2221,7 +2237,7 @@ export class ChatView extends ItemView {
 	}
 
 	private stopAgentRun() {
-		const stopped = this.plugin.agentService.stop();
+		const stopped = this.plugin.agentService?.stop();
 		new Notice(stopped ? 'Agent run stopped.' : 'No active Agent run to stop.');
 	}
 
@@ -2229,6 +2245,9 @@ export class ChatView extends ItemView {
 		text: string,
 		onChunk?: (chunk: string, stream: 'stdout' | 'stderr') => void
 	): Promise<ChatMessage> {
+		if (!this.plugin.agentService) {
+			return { role: 'model', content: 'Agent is only available on desktop.' };
+		}
 		const result = await this.plugin.agentService.run(text, onChunk);
 		const contextLine = result.contextStats
 			? [
