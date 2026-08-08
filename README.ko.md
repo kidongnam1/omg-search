@@ -148,6 +148,12 @@ Agent:
 - Antigravity/AGY CLI 경로를 설정에서 Auto-detect하거나 직접 지정하세요.
 - Agent는 Gemini API 예산에 포함되지 않습니다.
 
+## 모바일 지원
+
+- Chat, Sync, Budget, Graph, Workspace, Settings 탭은 Android/iOS Obsidian 모바일에서 사용 가능
+- Agent, Wiki 탭은 CLI 도구가 필요하므로 데스크톱 전용
+- Obsidian Sync(유료)를 사용하면 데스크톱과 모바일 간 볼트 및 플러그인 설정을 자동 동기화
+
 ## 라이선스
 
 MIT

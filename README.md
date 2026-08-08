@@ -134,8 +134,12 @@ Turn your Obsidian vault into a Gemini File Search and Agent-powered knowledge w
 - Free tier available but heavy usage may incur costs
 - Monitor your usage in Google Cloud Console
 
+### Mobile Support
+- Chat, Sync, Budget, Graph, Workspace, and Settings work on Android and iOS via Obsidian mobile
+- Agent and Wiki tabs require CLI tools and are desktop-only
+- Obsidian Sync (paid) is the recommended way to keep your vault in sync across devices
+
 ### Limitations
-- Desktop only (Mac/Windows)
 - Markdown files only
 - Large vaults may take time for initial sync
 - Context length limits may affect very large notes
