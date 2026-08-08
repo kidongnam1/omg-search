@@ -313,11 +313,32 @@ export class ChatView extends ItemView {
 
 	private wikiQueryMessages: Array<{ role: 'user' | 'model'; content: string }> = [];
 	private wikiStatusCache: any = null;
+	private wikiCollapsedSections: Set<string> = new Set(['maintain', 'sessions', 'trust', 'export', 'manifest', 'special-files']);
+
+	private createWikiSection(parent: HTMLElement, id: string, title: string, defaultOpen = false): { header: HTMLElement; content: HTMLElement } {
+		const section = parent.createDiv({ cls: 'mok-wiki-section' });
+		const isCollapsed = defaultOpen ? false : this.wikiCollapsedSections.has(id);
+		const header = section.createDiv({ cls: `mok-wiki-section-header ${isCollapsed ? '' : 'mok-wiki-section-open'}` });
+		header.createEl('span', { cls: 'mok-wiki-section-arrow', text: isCollapsed ? '▸' : '▾' });
+		header.createEl('span', { text: title });
+		const content = section.createDiv({ cls: 'mok-wiki-section-body' });
+		if (isCollapsed) content.style.display = 'none';
+		header.addEventListener('click', () => {
+			const nowCollapsed = content.style.display === 'none';
+			content.style.display = nowCollapsed ? '' : 'none';
+			header.toggleClass('mok-wiki-section-open', nowCollapsed);
+			const arrow = header.querySelector('.mok-wiki-section-arrow');
+			if (arrow) arrow.textContent = nowCollapsed ? '▾' : '▸';
+			if (nowCollapsed) this.wikiCollapsedSections.delete(id);
+			else this.wikiCollapsedSections.add(id);
+		});
+		return { header, content };
+	}
 
 	private renderWikiTab() {
 		const panel = this.dashboardContentEl.createDiv({ cls: 'mok-panel mok-wiki-panel' });
 
-		// Status section
+		// Status section (always open)
 		const statusSection = panel.createDiv({ cls: 'mok-wiki-status' });
 		statusSection.createEl('h3', { text: 'Wiki Status' });
 		const statusContent = statusSection.createDiv({ cls: 'mok-wiki-status-content' });
@@ -338,6 +359,10 @@ export class ChatView extends ItemView {
 			grid.createDiv({ text: `Categories: ${status.categories.join(', ') || 'none'}` });
 			grid.createDiv({ text: `index.md: ${status.hasIndex ? 'yes' : 'no'}` });
 			grid.createDiv({ text: `.manifest.json: ${status.hasManifest ? 'yes' : 'no'}` });
+			if (status.hasLog) grid.createDiv({ text: 'log.md: yes' });
+			if (status.hasHot) grid.createDiv({ text: 'hot.md: yes' });
+			if (status.hasTrustLedger) grid.createDiv({ text: 'trust-ledger: yes' });
+			if (status.stagingCount > 0) grid.createDiv({ text: `Staged: ${status.stagingCount} files` });
 
 			if (!status.hasIndex && !status.hasManifest) {
 				const setupBtn = statusContent.createEl('button', {
@@ -348,7 +373,7 @@ export class ChatView extends ItemView {
 					setupBtn.setText('Setting up...');
 					setupBtn.setAttr('disabled', 'true');
 					const result = await this.plugin.wikiService.runSetup();
-					new Notice(result.message);
+					new Notice(result.output || result.error || 'Setup complete');
 					setupBtn.removeAttribute('disabled');
 					setupBtn.setText('Initialize Wiki Vault');
 					this.renderActiveTab();
@@ -357,9 +382,76 @@ export class ChatView extends ItemView {
 			this.wikiStatusCache = status;
 		});
 
-		// Lint section
-		const lintSection = panel.createDiv({ cls: 'mok-wiki-lint' });
-		lintSection.createEl('h3', { text: 'Health Check' });
+		// Query section (default open)
+		this.renderWikiQuerySection(panel);
+
+		// Health Check / Lint
+		this.renderWikiLintSection(panel);
+
+		// Staging (if enabled)
+		if (this.plugin.settings.wikiStagedWrites) {
+			this.renderWikiStagingSection(panel);
+		}
+
+		// Maintain
+		this.renderWikiMaintainSection(panel);
+
+		// Sessions
+		this.renderWikiSessionsSection(panel);
+
+		// Trust
+		this.renderWikiTrustSection(panel);
+
+		// Export
+		this.renderWikiExportSection(panel);
+
+		// Manifest
+		this.renderWikiManifestSection(panel);
+
+		// Special Files
+		this.renderWikiSpecialFilesSection(panel);
+	}
+
+	private renderWikiQuerySection(panel: HTMLElement) {
+		const { content: querySection } = this.createWikiSection(panel, 'query', 'Wiki Query', true);
+		querySection.createEl('p', { cls: 'setting-item-description', text: 'GraphRAG-backed tiered retrieval. Answers grounded in wiki pages with [[wikilink]] citations.' });
+
+		const queryMessages = querySection.createDiv({ cls: 'mok-wiki-query-messages' });
+		for (const msg of this.wikiQueryMessages) {
+			const msgEl = queryMessages.createDiv({ cls: `mok-wiki-msg mok-wiki-msg-${msg.role}` });
+			msgEl.createEl('strong', { text: msg.role === 'user' ? 'You' : 'Wiki' });
+			const bodyEl = msgEl.createDiv({ cls: 'mok-wiki-msg-body' });
+			this.renderWikiMessageContent(bodyEl, msg.content);
+		}
+
+		const inputRow = querySection.createDiv({ cls: 'mok-wiki-input-row' });
+		const queryInput = inputRow.createEl('textarea', {
+			cls: 'gemini-chat-input mok-wiki-query-input',
+			placeholder: 'Ask your wiki...'
+		});
+
+		queryInput.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter' && !e.shiftKey) {
+				e.preventDefault();
+				const query = queryInput.value.trim();
+				if (!query) return;
+				this.handleWikiQuery(query, queryInput, queryMessages);
+			}
+		});
+
+		const queryBtn = inputRow.createEl('button', {
+			cls: 'gemini-chat-send-btn',
+			text: '➤'
+		});
+		queryBtn.addEventListener('click', () => {
+			const query = queryInput.value.trim();
+			if (!query) return;
+			this.handleWikiQuery(query, queryInput, queryMessages);
+		});
+	}
+
+	private renderWikiLintSection(panel: HTMLElement) {
+		const { content: lintSection } = this.createWikiSection(panel, 'lint', 'Health Check', true);
 		const lintResultEl = lintSection.createDiv({ cls: 'mok-wiki-lint-results' });
 
 		const lintBtn = lintSection.createEl('button', {
@@ -398,43 +490,337 @@ export class ChatView extends ItemView {
 			lintBtn.removeAttribute('disabled');
 			lintBtn.setText('Run Lint');
 		});
+	}
 
-		// Query section
-		const querySection = panel.createDiv({ cls: 'mok-wiki-query' });
-		querySection.createEl('h3', { text: 'Wiki Query' });
-		querySection.createEl('p', { cls: 'setting-item-description', text: 'Query your wiki with GraphRAG-backed tiered retrieval. Answers are grounded in wiki pages with [[wikilink]] citations.' });
+	private renderWikiStagingSection(panel: HTMLElement) {
+		const { content: stagingSection } = this.createWikiSection(panel, 'staging', 'Staging Review', true);
+		stagingSection.createEl('p', { cls: 'setting-item-description', text: 'LLM-generated pages waiting in _staging/ for human review before merging into the wiki.' });
+		const stagingList = stagingSection.createDiv({ cls: 'mok-wiki-staging-list' });
+		stagingList.createEl('p', { text: 'Loading staged files...' });
 
-		const queryMessages = querySection.createDiv({ cls: 'mok-wiki-query-messages' });
-		for (const msg of this.wikiQueryMessages) {
-			const msgEl = queryMessages.createDiv({ cls: `mok-wiki-msg mok-wiki-msg-${msg.role}` });
-			msgEl.createEl('strong', { text: msg.role === 'user' ? 'You' : 'Wiki' });
-			const bodyEl = msgEl.createDiv({ cls: 'mok-wiki-msg-body' });
-			this.renderWikiMessageContent(bodyEl, msg.content);
+		this.plugin.wikiService.listStagedFiles().then(files => {
+			stagingList.empty();
+			if (files.length === 0) {
+				stagingList.createEl('p', { cls: 'mok-wiki-muted', text: 'No staged files.' });
+				return;
+			}
+			for (const file of files) {
+				const card = stagingList.createDiv({ cls: 'mok-wiki-staging-card' });
+				card.createEl('div', { cls: 'mok-wiki-staging-name', text: file.name });
+				const preview = file.content.replace(/---[\s\S]*?---/, '').trim().slice(0, 200);
+				if (preview) {
+					card.createEl('div', { cls: 'mok-wiki-staging-preview', text: preview + (file.content.length > 200 ? '...' : '') });
+				}
+				const actions = card.createDiv({ cls: 'mok-wiki-staging-actions' });
+				const viewBtn = actions.createEl('button', { cls: 'gemini-chat-action-btn', text: 'View' });
+				viewBtn.addEventListener('click', () => {
+					this.app.workspace.openLinkText(file.path, '', true);
+				});
+				const approveBtn = actions.createEl('button', { cls: 'gemini-chat-action-btn mok-wiki-btn-approve', text: 'Approve' });
+				approveBtn.addEventListener('click', async () => {
+					approveBtn.setText('Approving...');
+					approveBtn.setAttr('disabled', 'true');
+					const result = await this.plugin.wikiService.approveStagedFile(file.path);
+					new Notice(result.ok ? result.output : (result.error || 'Approval failed'));
+					this.renderActiveTab();
+				});
+				const rejectBtn = actions.createEl('button', { cls: 'gemini-chat-action-btn mok-wiki-btn-reject', text: 'Reject' });
+				rejectBtn.addEventListener('click', async () => {
+					rejectBtn.setText('Rejecting...');
+					rejectBtn.setAttr('disabled', 'true');
+					const result = await this.plugin.wikiService.rejectStagedFile(file.path);
+					new Notice(result.ok ? result.output : (result.error || 'Rejection failed'));
+					this.renderActiveTab();
+				});
+			}
+		});
+	}
+
+	private renderWikiMaintainSection(panel: HTMLElement) {
+		const { content: maintainSection } = this.createWikiSection(panel, 'maintain', 'Maintain');
+		maintainSection.createEl('p', { cls: 'setting-item-description', text: 'Wiki maintenance operations: cross-linking, deduplication, rebuild, and sync.' });
+		const btnGrid = maintainSection.createDiv({ cls: 'mok-wiki-btn-grid' });
+
+		const ops: Array<{ label: string; action: () => Promise<any>; description: string }> = [
+			{ label: 'Cross-linker', action: () => this.plugin.wikiService.runCrossLinker(), description: 'Add missing [[wikilinks]] between related pages' },
+			{ label: 'Dedup', action: () => this.plugin.wikiService.runDedup(), description: 'Find and consolidate duplicate pages' },
+			{ label: 'Rebuild', action: () => this.plugin.wikiService.runRebuild(), description: 'Rebuild wiki index and manifest' },
+			{ label: 'Sync', action: () => this.plugin.wikiService.runSync(), description: 'Sync wiki state with vault changes' },
+		];
+
+		const resultEl = maintainSection.createDiv({ cls: 'mok-wiki-result-output' });
+
+		for (const op of ops) {
+			const btn = btnGrid.createEl('button', { cls: 'gemini-chat-action-btn', text: op.label });
+			btn.setAttr('title', op.description);
+			btn.addEventListener('click', async () => {
+				btn.setText(`${op.label}...`);
+				btn.setAttr('disabled', 'true');
+				resultEl.empty();
+				const result = await op.action();
+				resultEl.empty();
+				if (result.error) {
+					resultEl.createEl('p', { cls: 'mok-wiki-error', text: result.error });
+				} else {
+					resultEl.createEl('pre', { cls: 'mok-wiki-pre', text: result.output || 'Done.' });
+				}
+				btn.removeAttribute('disabled');
+				btn.setText(op.label);
+			});
 		}
+	}
 
-		const queryInput = querySection.createEl('textarea', {
-			cls: 'gemini-chat-input mok-wiki-query-input',
-			placeholder: 'Ask your wiki...'
+	private renderWikiSessionsSection(panel: HTMLElement) {
+		const { content: sessionsSection } = this.createWikiSection(panel, 'sessions', 'Sessions');
+		sessionsSection.createEl('p', { cls: 'setting-item-description', text: 'Build session brain from journal entries, query session memory, and view session clusters.' });
+
+		const btnRow = sessionsSection.createDiv({ cls: 'mok-wiki-btn-grid' });
+		const resultEl = sessionsSection.createDiv({ cls: 'mok-wiki-result-output' });
+
+		const buildBtn = btnRow.createEl('button', { cls: 'gemini-chat-action-btn', text: 'Build Sessions' });
+		buildBtn.addEventListener('click', async () => {
+			buildBtn.setText('Building...');
+			buildBtn.setAttr('disabled', 'true');
+			resultEl.empty();
+			const result = await this.plugin.wikiService.runSessionsBuild();
+			resultEl.empty();
+			if (result.error) resultEl.createEl('p', { cls: 'mok-wiki-error', text: result.error });
+			else resultEl.createEl('pre', { cls: 'mok-wiki-pre', text: result.output || 'Done.' });
+			buildBtn.removeAttribute('disabled');
+			buildBtn.setText('Build Sessions');
 		});
 
-		queryInput.addEventListener('keydown', (e) => {
-			if (e.key === 'Enter' && !e.shiftKey) {
+		const clustersBtn = btnRow.createEl('button', { cls: 'gemini-chat-action-btn', text: 'View Clusters' });
+		clustersBtn.addEventListener('click', async () => {
+			clustersBtn.setText('Loading...');
+			clustersBtn.setAttr('disabled', 'true');
+			resultEl.empty();
+			const result = await this.plugin.wikiService.runSessionsClusters();
+			resultEl.empty();
+			if (result.error) resultEl.createEl('p', { cls: 'mok-wiki-error', text: result.error });
+			else resultEl.createEl('pre', { cls: 'mok-wiki-pre', text: result.output || 'No clusters found.' });
+			clustersBtn.removeAttribute('disabled');
+			clustersBtn.setText('View Clusters');
+		});
+
+		// Session query input
+		const queryRow = sessionsSection.createDiv({ cls: 'mok-wiki-input-row' });
+		const sessionInput = queryRow.createEl('input', {
+			cls: 'mok-wiki-inline-input',
+			type: 'text',
+			placeholder: 'Query session memory...'
+		});
+		const sessionQueryBtn = queryRow.createEl('button', { cls: 'gemini-chat-action-btn', text: 'Query' });
+		sessionQueryBtn.addEventListener('click', async () => {
+			const query = (sessionInput as HTMLInputElement).value.trim();
+			if (!query) return;
+			sessionQueryBtn.setText('Querying...');
+			sessionQueryBtn.setAttr('disabled', 'true');
+			resultEl.empty();
+			const result = await this.plugin.wikiService.runSessionsQuery(query);
+			resultEl.empty();
+			if (result.error) resultEl.createEl('p', { cls: 'mok-wiki-error', text: result.error });
+			else {
+				const bodyEl = resultEl.createDiv({ cls: 'mok-wiki-msg-body' });
+				this.renderWikiMessageContent(bodyEl, result.output || 'No results.');
+			}
+			sessionQueryBtn.removeAttribute('disabled');
+			sessionQueryBtn.setText('Query');
+		});
+		sessionInput.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter') {
 				e.preventDefault();
-				const query = queryInput.value.trim();
-				if (!query) return;
-				this.handleWikiQuery(query, queryInput, queryMessages);
+				sessionQueryBtn.click();
+			}
+		});
+	}
+
+	private renderWikiTrustSection(panel: HTMLElement) {
+		const { content: trustSection } = this.createWikiSection(panel, 'trust', 'Trust Ledger');
+		trustSection.createEl('p', { cls: 'setting-item-description', text: 'Provenance tracking: every claim tagged extracted, ^[inferred], or ^[ambiguous]. Review trust status per page.' });
+
+		const trustTable = trustSection.createDiv({ cls: 'mok-wiki-trust-table' });
+		trustTable.createEl('p', { text: 'Loading trust ledger...' });
+
+		this.plugin.wikiService.readTrustLedger().then(entries => {
+			trustTable.empty();
+			if (entries.length === 0) {
+				trustTable.createEl('p', { cls: 'mok-wiki-muted', text: 'No trust entries yet. Run trust-check on wiki pages to populate.' });
+				return;
+			}
+
+			const table = trustTable.createEl('table', { cls: 'mok-wiki-table' });
+			const thead = table.createEl('thead');
+			const headerRow = thead.createEl('tr');
+			headerRow.createEl('th', { text: 'Page' });
+			headerRow.createEl('th', { text: 'Status' });
+			headerRow.createEl('th', { text: 'Confidence' });
+
+			const tbody = table.createEl('tbody');
+			for (const entry of entries.slice(0, 50)) {
+				const row = tbody.createEl('tr');
+				const pageCell = row.createEl('td');
+				const pageLink = pageCell.createEl('a', { cls: 'mok-wiki-source-link', text: entry.page });
+				pageLink.addEventListener('click', (e) => {
+					e.preventDefault();
+					this.app.workspace.openLinkText(entry.page, '', false);
+				});
+				const statusCls = entry.status === 'trusted' ? 'mok-wiki-lint-pass' : entry.status === 'unverified' ? 'mok-wiki-lint-warn' : '';
+				row.createEl('td', { cls: statusCls, text: entry.status });
+				row.createEl('td', { text: entry.confidence != null ? `${Math.round(entry.confidence * 100)}%` : '-' });
+			}
+			if (entries.length > 50) {
+				trustTable.createEl('p', { cls: 'mok-wiki-muted', text: `Showing 50 of ${entries.length} entries.` });
 			}
 		});
 
-		const queryBtn = querySection.createEl('button', {
-			cls: 'gemini-chat-send-btn',
-			text: '➤'
+		// Trust check for specific page
+		const checkRow = trustSection.createDiv({ cls: 'mok-wiki-input-row' });
+		const trustInput = checkRow.createEl('input', {
+			cls: 'mok-wiki-inline-input',
+			type: 'text',
+			placeholder: 'Page name to trust-check...'
 		});
-		queryBtn.addEventListener('click', () => {
-			const query = queryInput.value.trim();
-			if (!query) return;
-			this.handleWikiQuery(query, queryInput, queryMessages);
+		const resultEl = trustSection.createDiv({ cls: 'mok-wiki-result-output' });
+
+		const trustCheckBtn = checkRow.createEl('button', { cls: 'gemini-chat-action-btn', text: 'Check' });
+		trustCheckBtn.addEventListener('click', async () => {
+			const page = (trustInput as HTMLInputElement).value.trim();
+			if (!page) return;
+			trustCheckBtn.setText('Checking...');
+			trustCheckBtn.setAttr('disabled', 'true');
+			resultEl.empty();
+			const result = await this.plugin.wikiService.runTrustCheck(page);
+			resultEl.empty();
+			if (result.error) resultEl.createEl('p', { cls: 'mok-wiki-error', text: result.error });
+			else resultEl.createEl('pre', { cls: 'mok-wiki-pre', text: result.output || 'Done.' });
+			trustCheckBtn.removeAttribute('disabled');
+			trustCheckBtn.setText('Check');
 		});
+		trustInput.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter') { e.preventDefault(); trustCheckBtn.click(); }
+		});
+
+		const trustRecordBtn = checkRow.createEl('button', { cls: 'gemini-chat-action-btn', text: 'Record' });
+		trustRecordBtn.addEventListener('click', async () => {
+			const page = (trustInput as HTMLInputElement).value.trim();
+			if (!page) return;
+			trustRecordBtn.setText('Recording...');
+			trustRecordBtn.setAttr('disabled', 'true');
+			resultEl.empty();
+			const result = await this.plugin.wikiService.runTrustRecord(page);
+			resultEl.empty();
+			if (result.error) resultEl.createEl('p', { cls: 'mok-wiki-error', text: result.error });
+			else resultEl.createEl('pre', { cls: 'mok-wiki-pre', text: result.output || 'Trust recorded.' });
+			trustRecordBtn.removeAttribute('disabled');
+			trustRecordBtn.setText('Record');
+			this.renderActiveTab();
+		});
+	}
+
+	private renderWikiExportSection(panel: HTMLElement) {
+		const { content: exportSection } = this.createWikiSection(panel, 'export', 'Export');
+		exportSection.createEl('p', { cls: 'setting-item-description', text: 'Export wiki graph in various formats for analysis or visualization.' });
+		const resultEl = exportSection.createDiv({ cls: 'mok-wiki-result-output' });
+
+		const formats: Array<{ id: 'json' | 'graphml' | 'cypher' | 'html'; label: string }> = [
+			{ id: 'json', label: 'JSON' },
+			{ id: 'graphml', label: 'GraphML' },
+			{ id: 'cypher', label: 'Cypher' },
+			{ id: 'html', label: 'HTML' },
+		];
+
+		const btnRow = exportSection.createDiv({ cls: 'mok-wiki-btn-grid' });
+		for (const fmt of formats) {
+			const btn = btnRow.createEl('button', { cls: 'gemini-chat-action-btn', text: fmt.label });
+			btn.addEventListener('click', async () => {
+				btn.setText(`${fmt.label}...`);
+				btn.setAttr('disabled', 'true');
+				resultEl.empty();
+				const result = await this.plugin.wikiService.runExport(fmt.id);
+				resultEl.empty();
+				if (result.error) {
+					resultEl.createEl('p', { cls: 'mok-wiki-error', text: result.error });
+				} else {
+					resultEl.createEl('pre', { cls: 'mok-wiki-pre', text: result.output.slice(0, 2000) || 'Export complete.' });
+					if (result.output.length > 2000) {
+						resultEl.createEl('p', { cls: 'mok-wiki-muted', text: `Output truncated (${result.output.length} chars total).` });
+					}
+				}
+				btn.removeAttribute('disabled');
+				btn.setText(fmt.label);
+			});
+		}
+	}
+
+	private renderWikiManifestSection(panel: HTMLElement) {
+		const { content: manifestSection } = this.createWikiSection(panel, 'manifest', 'Manifest');
+		manifestSection.createEl('p', { cls: 'setting-item-description', text: '.manifest.json tracks page hashes for change detection and delta syncing.' });
+		const manifestContent = manifestSection.createDiv({ cls: 'mok-wiki-manifest-content' });
+		manifestContent.createEl('p', { text: 'Loading manifest...' });
+
+		this.plugin.wikiService.readManifest().then(entries => {
+			manifestContent.empty();
+			if (entries.length === 0) {
+				manifestContent.createEl('p', { cls: 'mok-wiki-muted', text: 'No manifest found. Run setup or sync first.' });
+				return;
+			}
+			manifestContent.createEl('p', { cls: 'mok-wiki-muted', text: `${entries.length} tracked pages` });
+			const table = manifestContent.createEl('table', { cls: 'mok-wiki-table' });
+			const thead = table.createEl('thead');
+			const headerRow = thead.createEl('tr');
+			headerRow.createEl('th', { text: 'Path' });
+			headerRow.createEl('th', { text: 'Hash' });
+			const tbody = table.createEl('tbody');
+			for (const entry of entries.slice(0, 100)) {
+				const row = tbody.createEl('tr');
+				const pathCell = row.createEl('td');
+				const pathLink = pathCell.createEl('a', { cls: 'mok-wiki-source-link', text: entry.path });
+				pathLink.addEventListener('click', (e) => {
+					e.preventDefault();
+					this.app.workspace.openLinkText(entry.path, '', false);
+				});
+				row.createEl('td', { cls: 'mok-wiki-hash', text: entry.hash.slice(0, 12) + '...' });
+			}
+			if (entries.length > 100) {
+				manifestContent.createEl('p', { cls: 'mok-wiki-muted', text: `Showing 100 of ${entries.length} entries.` });
+			}
+		});
+	}
+
+	private renderWikiSpecialFilesSection(panel: HTMLElement) {
+		const { content: specialSection } = this.createWikiSection(panel, 'special-files', 'Special Files');
+		specialSection.createEl('p', { cls: 'setting-item-description', text: 'Quick access to wiki index, activity log, and hot topics.' });
+
+		const files: Array<{ name: 'index.md' | 'log.md' | 'hot.md' | '_insights.md'; label: string; description: string }> = [
+			{ name: 'index.md', label: 'Index', description: 'Wiki table of contents' },
+			{ name: 'log.md', label: 'Log', description: 'Activity log of recent changes' },
+			{ name: 'hot.md', label: 'Hot Topics', description: 'Currently trending topics' },
+			{ name: '_insights.md', label: 'Insights', description: 'Generated insights summary' },
+		];
+
+		const resultEl = specialSection.createDiv({ cls: 'mok-wiki-result-output' });
+		const btnRow = specialSection.createDiv({ cls: 'mok-wiki-btn-grid' });
+
+		for (const file of files) {
+			const btn = btnRow.createEl('button', { cls: 'gemini-chat-action-btn', text: file.label });
+			btn.setAttr('title', file.description);
+			btn.addEventListener('click', async () => {
+				const exists = this.app.vault.getAbstractFileByPath(file.name);
+				if (exists instanceof TFile) {
+					await this.app.workspace.openLinkText(file.name, '', true);
+				} else {
+					resultEl.empty();
+					const content = await this.plugin.wikiService.readSpecialFile(file.name);
+					if (content) {
+						const bodyEl = resultEl.createDiv({ cls: 'mok-wiki-msg-body' });
+						this.renderWikiMessageContent(bodyEl, content.slice(0, 3000));
+					} else {
+						resultEl.createEl('p', { cls: 'mok-wiki-muted', text: `${file.name} not found.` });
+					}
+				}
+			});
+		}
 	}
 
 	private renderWikiMessageContent(container: HTMLElement, content: string) {

@@ -599,7 +599,7 @@ export class GeminiSyncSettingTab extends PluginSettingTab {
 					button.setDisabled(true);
 					try {
 						const result = await this.plugin.wikiService.runSetup();
-						new Notice(result.message);
+						new Notice(result.ok ? (result.output || 'Wiki initialized') : (result.error || 'Setup failed'));
 					} catch (error) {
 						new Notice('Wiki setup failed. Check console for details.');
 						console.error('Wiki setup error:', error);

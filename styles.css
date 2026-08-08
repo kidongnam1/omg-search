@@ -1311,3 +1311,188 @@
 	min-height: 40px;
 	max-height: 80px;
 }
+
+/* ---- Wiki collapsible sections ---- */
+.mok-wiki-section {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.mok-wiki-section-header {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 12px;
+	background: var(--background-secondary);
+	color: var(--text-normal);
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+	user-select: none;
+}
+
+.mok-wiki-section-header:hover {
+	background: var(--background-modifier-hover);
+}
+
+.mok-wiki-section-arrow {
+	font-size: 11px;
+	color: var(--text-muted);
+	width: 12px;
+	flex-shrink: 0;
+}
+
+.mok-wiki-section-body {
+	padding: 10px 12px;
+}
+
+/* ---- Wiki button grid ---- */
+.mok-wiki-btn-grid {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin: 8px 0;
+}
+
+/* ---- Wiki input row ---- */
+.mok-wiki-input-row {
+	display: flex;
+	gap: 6px;
+	align-items: flex-start;
+	margin: 8px 0;
+}
+
+.mok-wiki-inline-input {
+	flex: 1;
+	min-width: 0;
+	padding: 7px 10px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+	font-size: 13px;
+}
+
+.mok-wiki-inline-input:focus {
+	border-color: var(--interactive-accent);
+	outline: none;
+}
+
+/* ---- Wiki result output ---- */
+.mok-wiki-result-output {
+	margin-top: 8px;
+}
+
+.mok-wiki-result-output:empty {
+	display: none;
+}
+
+.mok-wiki-pre {
+	max-height: 240px;
+	overflow: auto;
+	margin: 0;
+	padding: 8px 10px;
+	border-radius: 6px;
+	background: var(--background-primary);
+	color: var(--text-muted);
+	font-size: 12px;
+	white-space: pre-wrap;
+	line-height: 1.45;
+}
+
+.mok-wiki-muted {
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
+/* ---- Wiki staging cards ---- */
+.mok-wiki-staging-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-top: 8px;
+}
+
+.mok-wiki-staging-card {
+	padding: 10px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-primary);
+}
+
+.mok-wiki-staging-name {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text-normal);
+	margin-bottom: 4px;
+}
+
+.mok-wiki-staging-preview {
+	font-size: 12px;
+	color: var(--text-muted);
+	line-height: 1.4;
+	margin-bottom: 8px;
+	max-height: 60px;
+	overflow: hidden;
+}
+
+.mok-wiki-staging-actions {
+	display: flex;
+	gap: 6px;
+}
+
+.mok-wiki-btn-approve {
+	color: var(--text-success, #4ade80);
+}
+
+.mok-wiki-btn-approve:hover {
+	border-color: var(--text-success, #4ade80);
+}
+
+.mok-wiki-btn-reject {
+	color: var(--text-error);
+}
+
+.mok-wiki-btn-reject:hover {
+	border-color: var(--text-error);
+}
+
+/* ---- Wiki tables ---- */
+.mok-wiki-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 12px;
+	margin-top: 8px;
+}
+
+.mok-wiki-table th {
+	text-align: left;
+	padding: 6px 8px;
+	border-bottom: 2px solid var(--background-modifier-border);
+	color: var(--text-muted);
+	font-weight: 600;
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+}
+
+.mok-wiki-table td {
+	padding: 5px 8px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	color: var(--text-normal);
+	max-width: 200px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.mok-wiki-table tbody tr:hover {
+	background: var(--background-modifier-hover);
+}
+
+.mok-wiki-hash {
+	font-family: var(--font-monospace);
+	color: var(--text-muted);
+	font-size: 11px;
+}

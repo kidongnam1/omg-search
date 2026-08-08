@@ -104,6 +104,80 @@ export default class GeminiSyncPlugin extends Plugin {
 			}
 		});
 
+		// Add command for wiki setup
+		this.addCommand({
+			id: 'wiki-setup',
+			name: 'Wiki Setup',
+			callback: async () => {
+				if (!this.settings.wikiEnabled) {
+					new Notice('Enable Wiki integration in settings first');
+					return;
+				}
+				const result = await this.wikiService.runSetup();
+				new Notice(result.ok ? 'Wiki vault initialized' : (result.error || 'Setup failed'));
+			}
+		});
+
+		// Add command for wiki sync
+		this.addCommand({
+			id: 'wiki-sync',
+			name: 'Wiki Sync',
+			callback: async () => {
+				if (!this.settings.wikiEnabled) {
+					new Notice('Enable Wiki integration in settings first');
+					return;
+				}
+				const result = await this.wikiService.runSync();
+				new Notice(result.ok ? 'Wiki synced' : (result.error || 'Sync failed'));
+			}
+		});
+
+		// Add command for wiki cross-linker
+		this.addCommand({
+			id: 'wiki-cross-linker',
+			name: 'Wiki Cross-linker',
+			callback: async () => {
+				if (!this.settings.wikiEnabled) {
+					new Notice('Enable Wiki integration in settings first');
+					return;
+				}
+				const result = await this.wikiService.runCrossLinker();
+				new Notice(result.ok ? 'Cross-linking complete' : (result.error || 'Cross-linker failed'));
+			}
+		});
+
+		// Add command for wiki sessions build
+		this.addCommand({
+			id: 'wiki-sessions-build',
+			name: 'Wiki Sessions Build',
+			callback: async () => {
+				if (!this.settings.wikiEnabled) {
+					new Notice('Enable Wiki integration in settings first');
+					return;
+				}
+				const result = await this.wikiService.runSessionsBuild();
+				new Notice(result.ok ? 'Session brain built' : (result.error || 'Sessions build failed'));
+			}
+		});
+
+		// Add command for wiki export
+		this.addCommand({
+			id: 'wiki-export',
+			name: 'Wiki Graph Export',
+			callback: async () => {
+				if (!this.settings.wikiEnabled) {
+					new Notice('Enable Wiki integration in settings first');
+					return;
+				}
+				const result = await this.wikiService.runExport('json');
+				if (result.ok) {
+					new Notice('Wiki graph exported');
+				} else {
+					new Notice(result.error || 'Export failed');
+				}
+			}
+		});
+
 		// Initial sync on load (if configured)
 		if (this.settings.apiKey && this.settings.syncFolders.length > 0) {
 			// Delay initial sync to let vault fully load

@@ -1,4 +1,4 @@
-import { Notice } from 'obsidian';
+import { Notice, TFile, TFolder } from 'obsidian';
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
@@ -14,6 +14,10 @@ export interface WikiStatusResult {
 	categories: string[];
 	hasManifest: boolean;
 	hasIndex: boolean;
+	hasLog: boolean;
+	hasHot: boolean;
+	hasTrustLedger: boolean;
+	stagingCount: number;
 	error?: string;
 }
 
@@ -37,12 +41,35 @@ export interface WikiLintCheck {
 	items?: string[];
 }
 
-export interface WikiIngestResult {
+export interface WikiCliResult {
 	ok: boolean;
-	pagesCreated: number;
-	pagesUpdated: number;
-	message: string;
+	output: string;
 	error?: string;
+}
+
+export interface WikiStagedFile {
+	path: string;
+	name: string;
+	content: string;
+}
+
+export interface WikiTrustEntry {
+	page: string;
+	status: string;
+	confidence: number;
+	reviewer: string;
+	timestamp: string;
+}
+
+export interface WikiManifestEntry {
+	path: string;
+	hash: string;
+}
+
+export interface WikiSessionCluster {
+	id: number;
+	label: string;
+	sessions: string[];
 }
 
 export class WikiService {
@@ -64,7 +91,6 @@ export class WikiService {
 		}
 
 		const candidates = [
-			'obsidian-wiki',
 			join(homedir(), '.local', 'bin', 'obsidian-wiki'),
 			join(homedir(), '.cargo', 'bin', 'obsidian-wiki'),
 			'/usr/local/bin/obsidian-wiki',
@@ -93,6 +119,29 @@ export class WikiService {
 		return null;
 	}
 
+	getWikiVaultPath(): string {
+		if (this.plugin.settings.wikiVaultPath) {
+			return this.plugin.settings.wikiVaultPath;
+		}
+		return this.plugin.getVaultPath();
+	}
+
+	private getEnv(): Record<string, string> {
+		const env: Record<string, string> = { OBSIDIAN_VAULT_PATH: this.getWikiVaultPath() };
+		if (this.plugin.settings.wikiStagedWrites) {
+			env.WIKI_STAGED_WRITES = '1';
+		}
+		return env;
+	}
+
+	private requireCli(): string {
+		const cliPath = this.resolveCliPath();
+		if (!cliPath) throw new Error('obsidian-wiki CLI not found. Install with: pip install obsidian-wiki');
+		return cliPath;
+	}
+
+	// ── Status & Setup ──────────────────────────────────────────────────
+
 	async checkInstallation(): Promise<WikiStatusResult> {
 		const cliPath = this.resolveCliPath();
 		const vaultPath = this.getWikiVaultPath();
@@ -105,6 +154,10 @@ export class WikiService {
 			categories: [],
 			hasManifest: false,
 			hasIndex: false,
+			hasLog: false,
+			hasHot: false,
+			hasTrustLedger: false,
+			stagingCount: 0,
 		};
 
 		if (!cliPath) {
@@ -115,10 +168,7 @@ export class WikiService {
 		result.installed = true;
 
 		try {
-			const output = await this.exec(cliPath, ['doctor'], 10000);
-			if (output.exitCode === 0) {
-				result.installed = true;
-			}
+			await this.exec(cliPath, ['doctor'], 10000);
 		} catch {
 			result.error = 'obsidian-wiki doctor check failed';
 		}
@@ -127,6 +177,14 @@ export class WikiService {
 			const vault = this.plugin.app.vault;
 			result.hasManifest = !!vault.getAbstractFileByPath('.manifest.json');
 			result.hasIndex = !!vault.getAbstractFileByPath('index.md');
+			result.hasLog = !!vault.getAbstractFileByPath('log.md');
+			result.hasHot = !!vault.getAbstractFileByPath('hot.md');
+			result.hasTrustLedger = !!vault.getAbstractFileByPath('_meta/trust-ledger.json');
+
+			const staging = vault.getAbstractFileByPath('_staging');
+			if (staging && staging instanceof TFolder) {
+				result.stagingCount = staging.children.filter(f => f instanceof TFile && (f as TFile).extension === 'md').length;
+			}
 
 			const categories = ['concepts', 'entities', 'skills', 'references', 'synthesis', 'journal', 'projects'];
 			result.categories = categories.filter(c => !!vault.getAbstractFileByPath(c));
@@ -134,8 +192,8 @@ export class WikiService {
 			let count = 0;
 			for (const cat of result.categories) {
 				const folder = vault.getAbstractFileByPath(cat);
-				if (folder && 'children' in folder) {
-					count += (folder as any).children.filter((f: any) => f.extension === 'md').length;
+				if (folder && folder instanceof TFolder) {
+					count += this.countMarkdownFiles(folder);
 				}
 			}
 			result.pageCount = count;
@@ -144,193 +202,359 @@ export class WikiService {
 		return result;
 	}
 
+	private countMarkdownFiles(folder: TFolder): number {
+		let count = 0;
+		for (const child of folder.children) {
+			if (child instanceof TFile && child.extension === 'md') count++;
+			if (child instanceof TFolder) count += this.countMarkdownFiles(child);
+		}
+		return count;
+	}
+
+	async runSetup(): Promise<WikiCliResult> {
+		const cli = this.requireCli();
+		const vaultPath = this.getWikiVaultPath();
+		if (!vaultPath) return { ok: false, output: '', error: 'Wiki vault path not configured.' };
+
+		try {
+			const out = await this.exec(cli, ['setup', '--vault', vaultPath], 30000);
+			return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : undefined };
+		} catch (e: any) {
+			return { ok: false, output: '', error: e?.message };
+		}
+	}
+
+	// ── Query ────────────────────────────────────────────────────────────
+
 	async runQuery(query: string): Promise<WikiQueryResult> {
-		const cliPath = this.resolveCliPath();
-		if (!cliPath) {
-			return { answer: '', sources: [], error: 'obsidian-wiki CLI not found' };
-		}
-
-		const vaultPath = this.getWikiVaultPath();
-		if (!vaultPath) {
-			return { answer: '', sources: [], error: 'Wiki vault path not configured' };
-		}
-
+		const cli = this.requireCli();
 		try {
-			const output = await this.exec(cliPath, ['query', query], 30000, { OBSIDIAN_VAULT_PATH: vaultPath });
+			const out = await this.exec(cli, ['query', query], 30000, this.getEnv());
 			const sources: string[] = [];
-			const lines = output.stdout.split('\n');
-			for (const line of lines) {
-				const match = line.match(/\[\[([^\]]+)\]\]/g);
-				if (match) {
-					sources.push(...match.map(m => m.replace(/^\[\[|\]\]$/g, '')));
-				}
+			for (const line of out.stdout.split('\n')) {
+				const matches = line.match(/\[\[([^\]]+)\]\]/g);
+				if (matches) sources.push(...matches.map(m => m.replace(/^\[\[|\]\]$/g, '')));
 			}
-			return {
-				answer: output.stdout.trim(),
-				sources: [...new Set(sources)],
-				error: output.exitCode !== 0 ? output.stderr.trim() : undefined,
-			};
-		} catch (error: any) {
-			return { answer: '', sources: [], error: error?.message || 'Query failed' };
+			return { answer: out.stdout.trim(), sources: [...new Set(sources)], error: out.exitCode !== 0 ? out.stderr.trim() : undefined };
+		} catch (e: any) {
+			return { answer: '', sources: [], error: e?.message || 'Query failed' };
 		}
 	}
 
-	async runLint(): Promise<WikiLintResult> {
-		const cliPath = this.resolveCliPath();
-		if (!cliPath) {
-			return { ok: false, checks: [], summary: '', error: 'obsidian-wiki CLI not found' };
-		}
-
-		const vaultPath = this.getWikiVaultPath();
-		if (!vaultPath) {
-			return { ok: false, checks: [], summary: '', error: 'Wiki vault path not configured' };
-		}
-
+	async runGraphQuery(query: string): Promise<WikiCliResult> {
+		const cli = this.requireCli();
 		try {
-			const output = await this.exec(cliPath, ['lint'], 30000, { OBSIDIAN_VAULT_PATH: vaultPath });
-			const checks: WikiLintCheck[] = [];
-			let currentCheck: WikiLintCheck | null = null;
-
-			for (const line of output.stdout.split('\n')) {
-				const passMatch = line.match(/^\s*(PASS|OK|✓)\s+(.+)/i);
-				const failMatch = line.match(/^\s*(FAIL|ERROR|✗|✘)\s+(.+)/i);
-				const warnMatch = line.match(/^\s*(WARN|WARNING|⚠)\s+(.+)/i);
-
-				if (passMatch) {
-					currentCheck = { name: passMatch[2].trim(), status: 'pass', message: passMatch[2].trim() };
-					checks.push(currentCheck);
-				} else if (failMatch) {
-					currentCheck = { name: failMatch[2].trim(), status: 'fail', message: failMatch[2].trim(), items: [] };
-					checks.push(currentCheck);
-				} else if (warnMatch) {
-					currentCheck = { name: warnMatch[2].trim(), status: 'warn', message: warnMatch[2].trim(), items: [] };
-					checks.push(currentCheck);
-				} else if (currentCheck && currentCheck.items && line.trim().startsWith('-')) {
-					currentCheck.items.push(line.trim().slice(1).trim());
-				}
-			}
-
-			const failCount = checks.filter(c => c.status === 'fail').length;
-			const warnCount = checks.filter(c => c.status === 'warn').length;
-			const passCount = checks.filter(c => c.status === 'pass').length;
-
-			return {
-				ok: failCount === 0,
-				checks,
-				summary: `${passCount} passed, ${warnCount} warnings, ${failCount} failed`,
-				error: output.exitCode !== 0 ? output.stderr.trim() : undefined,
-			};
-		} catch (error: any) {
-			return { ok: false, checks: [], summary: '', error: error?.message || 'Lint failed' };
-		}
-	}
-
-	async runIngest(sourcePath: string): Promise<WikiIngestResult> {
-		const cliPath = this.resolveCliPath();
-		if (!cliPath) {
-			return { ok: false, pagesCreated: 0, pagesUpdated: 0, message: '', error: 'obsidian-wiki CLI not found' };
-		}
-
-		const vaultPath = this.getWikiVaultPath();
-		if (!vaultPath) {
-			return { ok: false, pagesCreated: 0, pagesUpdated: 0, message: '', error: 'Wiki vault path not configured' };
-		}
-
-		try {
-			const output = await this.exec(cliPath, ['cache-check', sourcePath], 60000, { OBSIDIAN_VAULT_PATH: vaultPath });
-			let created = 0;
-			let updated = 0;
-
-			for (const line of output.stdout.split('\n')) {
-				const createMatch = line.match(/created?\s*:?\s*(\d+)/i);
-				const updateMatch = line.match(/updated?\s*:?\s*(\d+)/i);
-				if (createMatch) created = parseInt(createMatch[1]);
-				if (updateMatch) updated = parseInt(updateMatch[1]);
-			}
-
-			return {
-				ok: output.exitCode === 0,
-				pagesCreated: created,
-				pagesUpdated: updated,
-				message: output.stdout.trim(),
-				error: output.exitCode !== 0 ? output.stderr.trim() : undefined,
-			};
-		} catch (error: any) {
-			return { ok: false, pagesCreated: 0, pagesUpdated: 0, message: '', error: error?.message || 'Ingest failed' };
-		}
-	}
-
-	async runSetup(): Promise<{ ok: boolean; message: string }> {
-		const cliPath = this.resolveCliPath();
-		if (!cliPath) {
-			return { ok: false, message: 'obsidian-wiki CLI not found. Install with: pip install obsidian-wiki' };
-		}
-
-		const vaultPath = this.getWikiVaultPath();
-		if (!vaultPath) {
-			return { ok: false, message: 'Wiki vault path not configured. Set it in settings.' };
-		}
-
-		try {
-			const output = await this.exec(cliPath, ['setup', '--vault', vaultPath], 30000);
-			return {
-				ok: output.exitCode === 0,
-				message: output.exitCode === 0
-					? 'Wiki vault initialized successfully.'
-					: output.stderr.trim() || 'Setup failed.',
-			};
-		} catch (error: any) {
-			return { ok: false, message: error?.message || 'Setup failed' };
+			const out = await this.exec(cli, ['graph-query', query], 20000, this.getEnv());
+			return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : undefined };
+		} catch (e: any) {
+			return { ok: false, output: '', error: e?.message };
 		}
 	}
 
 	async runContextPack(topic: string, budget = 8000): Promise<string> {
-		const cliPath = this.resolveCliPath();
-		if (!cliPath) return '';
-
-		const vaultPath = this.getWikiVaultPath();
-		if (!vaultPath) return '';
-
+		const cli = this.resolveCliPath();
+		if (!cli) return '';
 		try {
-			const output = await this.exec(
-				cliPath,
-				['context-pack', '--budget', String(budget), '--json', topic],
-				15000,
-				{ OBSIDIAN_VAULT_PATH: vaultPath },
-			);
-			return output.stdout.trim();
+			const out = await this.exec(cli, ['context-pack', '--budget', String(budget), '--json', topic], 15000, this.getEnv());
+			return out.stdout.trim();
 		} catch {
 			return '';
 		}
 	}
 
-	async listSkills(): Promise<string[]> {
-		const cliPath = this.resolveCliPath();
-		if (!cliPath) return [];
+	// ── Lint & Maintenance ──────────────────────────────────────────────
 
+	async runLint(): Promise<WikiLintResult> {
+		const cli = this.requireCli();
 		try {
-			const output = await this.exec(cliPath, ['list'], 10000);
-			return output.stdout
-				.split('\n')
-				.map(l => l.trim())
-				.filter(l => l && !l.startsWith('#') && !l.startsWith('-'));
+			const out = await this.exec(cli, ['lint'], 30000, this.getEnv());
+			const checks = this.parseLintOutput(out.stdout);
+			const failCount = checks.filter(c => c.status === 'fail').length;
+			const warnCount = checks.filter(c => c.status === 'warn').length;
+			const passCount = checks.filter(c => c.status === 'pass').length;
+			return {
+				ok: failCount === 0,
+				checks,
+				summary: `${passCount} passed, ${warnCount} warnings, ${failCount} failed`,
+				error: out.exitCode !== 0 ? out.stderr.trim() : undefined,
+			};
+		} catch (e: any) {
+			return { ok: false, checks: [], summary: '', error: e?.message };
+		}
+	}
+
+	private parseLintOutput(stdout: string): WikiLintCheck[] {
+		const checks: WikiLintCheck[] = [];
+		let current: WikiLintCheck | null = null;
+		for (const line of stdout.split('\n')) {
+			const pass = line.match(/^\s*(PASS|OK|✓)\s+(.+)/i);
+			const fail = line.match(/^\s*(FAIL|ERROR|✗|✘)\s+(.+)/i);
+			const warn = line.match(/^\s*(WARN|WARNING|⚠)\s+(.+)/i);
+			if (pass) { current = { name: pass[2].trim(), status: 'pass', message: pass[2].trim() }; checks.push(current); }
+			else if (fail) { current = { name: fail[2].trim(), status: 'fail', message: fail[2].trim(), items: [] }; checks.push(current); }
+			else if (warn) { current = { name: warn[2].trim(), status: 'warn', message: warn[2].trim(), items: [] }; checks.push(current); }
+			else if (current?.items && line.trim().startsWith('-')) { current.items.push(line.trim().slice(1).trim()); }
+		}
+		return checks;
+	}
+
+	async runCrossLinker(): Promise<WikiCliResult> {
+		return this.runCliCommand(['lint', '--consolidate'], 60000);
+	}
+
+	async runDedup(): Promise<WikiCliResult> {
+		return this.runCliCommand(['lint', '--consolidate'], 60000);
+	}
+
+	async runRebuild(): Promise<WikiCliResult> {
+		return this.runCliCommand(['lint', '--consolidate'], 120000);
+	}
+
+	async runSync(): Promise<WikiCliResult> {
+		return this.runCliCommand(['sync'], 30000);
+	}
+
+	// ── Ingest ──────────────────────────────────────────────────────────
+
+	async runCacheCheck(sourcePath: string): Promise<WikiCliResult> {
+		return this.runCliCommand(['cache-check', sourcePath], 15000);
+	}
+
+	async runCacheUpdate(sourcePath: string): Promise<WikiCliResult> {
+		return this.runCliCommand(['cache-update', sourcePath], 15000);
+	}
+
+	// ── Sessions ────────────────────────────────────────────────────────
+
+	async runSessionsBuild(): Promise<WikiCliResult> {
+		return this.runCliCommand(['sessions-build'], 60000);
+	}
+
+	async runSessionsQuery(query: string): Promise<WikiCliResult> {
+		const cli = this.requireCli();
+		try {
+			const out = await this.exec(cli, ['sessions-query', query], 30000, this.getEnv());
+			return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : undefined };
+		} catch (e: any) {
+			return { ok: false, output: '', error: e?.message };
+		}
+	}
+
+	async runSessionsClusters(): Promise<WikiCliResult> {
+		return this.runCliCommand(['sessions-clusters'], 30000);
+	}
+
+	// ── Trust ───────────────────────────────────────────────────────────
+
+	async runTrustCheck(page: string): Promise<WikiCliResult> {
+		const cli = this.requireCli();
+		try {
+			const out = await this.exec(cli, ['trust-check', page], 10000, this.getEnv());
+			return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : undefined };
+		} catch (e: any) {
+			return { ok: false, output: '', error: e?.message };
+		}
+	}
+
+	async runTrustRecord(page: string): Promise<WikiCliResult> {
+		const cli = this.requireCli();
+		try {
+			const out = await this.exec(cli, ['trust-record', page], 10000, this.getEnv());
+			return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : undefined };
+		} catch (e: any) {
+			return { ok: false, output: '', error: e?.message };
+		}
+	}
+
+	async readTrustLedger(): Promise<WikiTrustEntry[]> {
+		try {
+			const file = this.plugin.app.vault.getAbstractFileByPath('_meta/trust-ledger.json');
+			if (!(file instanceof TFile)) return [];
+			const text = await this.plugin.app.vault.read(file);
+			const data = JSON.parse(text);
+			if (Array.isArray(data)) return data;
+			if (data && typeof data === 'object') {
+				return Object.entries(data).map(([page, entry]: [string, any]) => ({
+					page,
+					status: entry.status || entry.verdict || 'unknown',
+					confidence: entry.confidence ?? entry.score ?? 0,
+					reviewer: entry.reviewer || entry.by || '',
+					timestamp: entry.timestamp || entry.date || '',
+				}));
+			}
+			return [];
 		} catch {
 			return [];
 		}
 	}
 
-	getWikiVaultPath(): string {
-		if (this.plugin.settings.wikiVaultPath) {
-			return this.plugin.settings.wikiVaultPath;
+	// ── Staging ─────────────────────────────────────────────────────────
+
+	async listStagedFiles(): Promise<WikiStagedFile[]> {
+		const staging = this.plugin.app.vault.getAbstractFileByPath('_staging');
+		if (!staging || !(staging instanceof TFolder)) return [];
+
+		const files: WikiStagedFile[] = [];
+		for (const child of staging.children) {
+			if (child instanceof TFile && child.extension === 'md') {
+				try {
+					const content = await this.plugin.app.vault.read(child);
+					files.push({ path: child.path, name: child.basename, content });
+				} catch {
+					files.push({ path: child.path, name: child.basename, content: '' });
+				}
+			}
 		}
-		return this.plugin.getVaultPath();
+		return files;
 	}
+
+	async approveStagedFile(stagedPath: string): Promise<WikiCliResult> {
+		const file = this.plugin.app.vault.getAbstractFileByPath(stagedPath);
+		if (!(file instanceof TFile)) return { ok: false, output: '', error: `File not found: ${stagedPath}` };
+
+		try {
+			const content = await this.plugin.app.vault.read(file);
+			const targetName = file.basename;
+			let targetPath = '';
+
+			const categoryMatch = content.match(/^category:\s*(.+)/m);
+			const category = categoryMatch ? categoryMatch[1].trim() : 'concepts';
+			targetPath = `${category}/${targetName}.md`;
+
+			const existing = this.plugin.app.vault.getAbstractFileByPath(targetPath);
+			if (existing instanceof TFile) {
+				await this.plugin.app.vault.modify(existing, content);
+			} else {
+				const folder = targetPath.split('/').slice(0, -1).join('/');
+				if (folder) await this.plugin.ensureVaultFolder(folder);
+				await this.plugin.app.vault.create(targetPath, content);
+			}
+
+			await this.plugin.app.vault.delete(file);
+			return { ok: true, output: `Approved: ${stagedPath} → ${targetPath}` };
+		} catch (e: any) {
+			return { ok: false, output: '', error: e?.message };
+		}
+	}
+
+	async rejectStagedFile(stagedPath: string): Promise<WikiCliResult> {
+		const file = this.plugin.app.vault.getAbstractFileByPath(stagedPath);
+		if (!(file instanceof TFile)) return { ok: false, output: '', error: `File not found: ${stagedPath}` };
+		try {
+			await this.plugin.app.vault.delete(file);
+			return { ok: true, output: `Rejected and deleted: ${stagedPath}` };
+		} catch (e: any) {
+			return { ok: false, output: '', error: e?.message };
+		}
+	}
+
+	// ── Manifest ────────────────────────────────────────────────────────
+
+	async readManifest(): Promise<WikiManifestEntry[]> {
+		try {
+			const file = this.plugin.app.vault.getAbstractFileByPath('.manifest.json');
+			if (!(file instanceof TFile)) return [];
+			const text = await this.plugin.app.vault.read(file);
+			const data = JSON.parse(text);
+			if (data && typeof data === 'object' && !Array.isArray(data)) {
+				return Object.entries(data)
+					.filter(([key]) => key !== 'last_commit_synced')
+					.map(([path, hash]) => ({ path, hash: String(hash) }));
+			}
+			return [];
+		} catch {
+			return [];
+		}
+	}
+
+	// ── Export ───────────────────────────────────────────────────────────
+
+	async runExport(format: 'json' | 'graphml' | 'cypher' | 'html'): Promise<WikiCliResult> {
+		const cli = this.requireCli();
+		try {
+			const args = ['graph-analyse'];
+			const out = await this.exec(cli, args, 30000, this.getEnv());
+			return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : undefined };
+		} catch (e: any) {
+			return { ok: false, output: '', error: e?.message };
+		}
+	}
+
+	// ── AST Extract ─────────────────────────────────────────────────────
+
+	async runAstExtract(filePath: string): Promise<WikiCliResult> {
+		const cli = this.requireCli();
+		try {
+			const out = await this.exec(cli, ['ast-extract', filePath], 15000, this.getEnv());
+			return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : undefined };
+		} catch (e: any) {
+			return { ok: false, output: '', error: e?.message };
+		}
+	}
+
+	// ── Skills ──────────────────────────────────────────────────────────
+
+	async listSkills(): Promise<string[]> {
+		const cli = this.resolveCliPath();
+		if (!cli) return [];
+		try {
+			const out = await this.exec(cli, ['list'], 10000);
+			return out.stdout.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#') && !l.startsWith('-'));
+		} catch {
+			return [];
+		}
+	}
+
+	async getSkillInfo(skillName: string): Promise<WikiCliResult> {
+		const cli = this.requireCli();
+		try {
+			const out = await this.exec(cli, ['info', skillName], 10000);
+			return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : undefined };
+		} catch (e: any) {
+			return { ok: false, output: '', error: e?.message };
+		}
+	}
+
+	// ── Read vault special files ────────────────────────────────────────
+
+	async readSpecialFile(name: 'index.md' | 'log.md' | 'hot.md' | '_insights.md'): Promise<string> {
+		try {
+			const file = this.plugin.app.vault.getAbstractFileByPath(name);
+			if (file instanceof TFile) return await this.plugin.app.vault.read(file);
+		} catch { /* ignore */ }
+		return '';
+	}
+
+	// ── Generic CLI runner ──────────────────────────────────────────────
+
+	private async runCliCommand(args: string[], timeout = 30000): Promise<WikiCliResult> {
+		const cli = this.requireCli();
+		try {
+			const out = await this.exec(cli, args, timeout, this.getEnv());
+			return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : undefined };
+		} catch (e: any) {
+			return { ok: false, output: '', error: e?.message };
+		}
+	}
+
+	async runArbitrary(args: string[], timeout = 30000, onChunk?: (chunk: string) => void): Promise<WikiCliResult> {
+		const cli = this.requireCli();
+		try {
+			const out = await this.exec(cli, args, timeout, this.getEnv(), onChunk);
+			return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : undefined };
+		} catch (e: any) {
+			return { ok: false, output: '', error: e?.message };
+		}
+	}
+
+	// ── Process execution ───────────────────────────────────────────────
 
 	private async exec(
 		command: string,
 		args: string[],
 		timeout = 30000,
 		extraEnv?: Record<string, string>,
+		onChunk?: (chunk: string) => void,
 	): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 		return new Promise((resolve, reject) => {
 			const env = { ...process.env, ...extraEnv };
@@ -346,7 +570,9 @@ export class WikiService {
 			let stderr = '';
 
 			child.stdout.on('data', (data: Buffer) => {
-				stdout += data.toString();
+				const chunk = data.toString();
+				stdout += chunk;
+				if (onChunk) onChunk(chunk);
 			});
 
 			child.stderr.on('data', (data: Buffer) => {

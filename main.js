@@ -27,7 +27,7 @@ __export(main_exports, {
   default: () => GeminiSyncPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // src/settings.ts
 var import_obsidian = require("obsidian");
@@ -410,7 +410,7 @@ var GeminiSyncSettingTab = class extends import_obsidian.PluginSettingTab {
         button.setDisabled(true);
         try {
           const result = await this.plugin.wikiService.runSetup();
-          new import_obsidian.Notice(result.message);
+          new import_obsidian.Notice(result.ok ? result.output || "Wiki initialized" : result.error || "Setup failed");
         } catch (error) {
           new import_obsidian.Notice("Wiki setup failed. Check console for details.");
           console.error("Wiki setup error:", error);
@@ -3333,6 +3333,7 @@ var ChatView = class extends import_obsidian4.ItemView {
     this.citationPreviewEl = null;
     this.wikiQueryMessages = [];
     this.wikiStatusCache = null;
+    this.wikiCollapsedSections = /* @__PURE__ */ new Set(["maintain", "sessions", "trust", "export", "manifest", "special-files"]);
     this.plugin = plugin;
   }
   getViewType() {
@@ -3525,6 +3526,29 @@ var ChatView = class extends import_obsidian4.ItemView {
       this.renderActiveTab();
     }
   }
+  createWikiSection(parent, id, title, defaultOpen = false) {
+    const section = parent.createDiv({ cls: "mok-wiki-section" });
+    const isCollapsed = defaultOpen ? false : this.wikiCollapsedSections.has(id);
+    const header = section.createDiv({ cls: `mok-wiki-section-header ${isCollapsed ? "" : "mok-wiki-section-open"}` });
+    header.createEl("span", { cls: "mok-wiki-section-arrow", text: isCollapsed ? "\u25B8" : "\u25BE" });
+    header.createEl("span", { text: title });
+    const content = section.createDiv({ cls: "mok-wiki-section-body" });
+    if (isCollapsed)
+      content.style.display = "none";
+    header.addEventListener("click", () => {
+      const nowCollapsed = content.style.display === "none";
+      content.style.display = nowCollapsed ? "" : "none";
+      header.toggleClass("mok-wiki-section-open", nowCollapsed);
+      const arrow = header.querySelector(".mok-wiki-section-arrow");
+      if (arrow)
+        arrow.textContent = nowCollapsed ? "\u25BE" : "\u25B8";
+      if (nowCollapsed)
+        this.wikiCollapsedSections.delete(id);
+      else
+        this.wikiCollapsedSections.add(id);
+    });
+    return { header, content };
+  }
   renderWikiTab() {
     const panel = this.dashboardContentEl.createDiv({ cls: "mok-panel mok-wiki-panel" });
     const statusSection = panel.createDiv({ cls: "mok-wiki-status" });
@@ -3545,6 +3569,14 @@ var ChatView = class extends import_obsidian4.ItemView {
       grid.createDiv({ text: `Categories: ${status.categories.join(", ") || "none"}` });
       grid.createDiv({ text: `index.md: ${status.hasIndex ? "yes" : "no"}` });
       grid.createDiv({ text: `.manifest.json: ${status.hasManifest ? "yes" : "no"}` });
+      if (status.hasLog)
+        grid.createDiv({ text: "log.md: yes" });
+      if (status.hasHot)
+        grid.createDiv({ text: "hot.md: yes" });
+      if (status.hasTrustLedger)
+        grid.createDiv({ text: "trust-ledger: yes" });
+      if (status.stagingCount > 0)
+        grid.createDiv({ text: `Staged: ${status.stagingCount} files` });
       if (!status.hasIndex && !status.hasManifest) {
         const setupBtn = statusContent.createEl("button", {
           cls: "gemini-chat-action-btn",
@@ -3554,7 +3586,7 @@ var ChatView = class extends import_obsidian4.ItemView {
           setupBtn.setText("Setting up...");
           setupBtn.setAttr("disabled", "true");
           const result = await this.plugin.wikiService.runSetup();
-          new import_obsidian4.Notice(result.message);
+          new import_obsidian4.Notice(result.output || result.error || "Setup complete");
           setupBtn.removeAttribute("disabled");
           setupBtn.setText("Initialize Wiki Vault");
           this.renderActiveTab();
@@ -3562,8 +3594,55 @@ var ChatView = class extends import_obsidian4.ItemView {
       }
       this.wikiStatusCache = status;
     });
-    const lintSection = panel.createDiv({ cls: "mok-wiki-lint" });
-    lintSection.createEl("h3", { text: "Health Check" });
+    this.renderWikiQuerySection(panel);
+    this.renderWikiLintSection(panel);
+    if (this.plugin.settings.wikiStagedWrites) {
+      this.renderWikiStagingSection(panel);
+    }
+    this.renderWikiMaintainSection(panel);
+    this.renderWikiSessionsSection(panel);
+    this.renderWikiTrustSection(panel);
+    this.renderWikiExportSection(panel);
+    this.renderWikiManifestSection(panel);
+    this.renderWikiSpecialFilesSection(panel);
+  }
+  renderWikiQuerySection(panel) {
+    const { content: querySection } = this.createWikiSection(panel, "query", "Wiki Query", true);
+    querySection.createEl("p", { cls: "setting-item-description", text: "GraphRAG-backed tiered retrieval. Answers grounded in wiki pages with [[wikilink]] citations." });
+    const queryMessages = querySection.createDiv({ cls: "mok-wiki-query-messages" });
+    for (const msg of this.wikiQueryMessages) {
+      const msgEl = queryMessages.createDiv({ cls: `mok-wiki-msg mok-wiki-msg-${msg.role}` });
+      msgEl.createEl("strong", { text: msg.role === "user" ? "You" : "Wiki" });
+      const bodyEl = msgEl.createDiv({ cls: "mok-wiki-msg-body" });
+      this.renderWikiMessageContent(bodyEl, msg.content);
+    }
+    const inputRow = querySection.createDiv({ cls: "mok-wiki-input-row" });
+    const queryInput = inputRow.createEl("textarea", {
+      cls: "gemini-chat-input mok-wiki-query-input",
+      placeholder: "Ask your wiki..."
+    });
+    queryInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        const query = queryInput.value.trim();
+        if (!query)
+          return;
+        this.handleWikiQuery(query, queryInput, queryMessages);
+      }
+    });
+    const queryBtn = inputRow.createEl("button", {
+      cls: "gemini-chat-send-btn",
+      text: "\u27A4"
+    });
+    queryBtn.addEventListener("click", () => {
+      const query = queryInput.value.trim();
+      if (!query)
+        return;
+      this.handleWikiQuery(query, queryInput, queryMessages);
+    });
+  }
+  renderWikiLintSection(panel) {
+    const { content: lintSection } = this.createWikiSection(panel, "lint", "Health Check", true);
     const lintResultEl = lintSection.createDiv({ cls: "mok-wiki-lint-results" });
     const lintBtn = lintSection.createEl("button", {
       cls: "gemini-chat-action-btn",
@@ -3598,39 +3677,322 @@ var ChatView = class extends import_obsidian4.ItemView {
       lintBtn.removeAttribute("disabled");
       lintBtn.setText("Run Lint");
     });
-    const querySection = panel.createDiv({ cls: "mok-wiki-query" });
-    querySection.createEl("h3", { text: "Wiki Query" });
-    querySection.createEl("p", { cls: "setting-item-description", text: "Query your wiki with GraphRAG-backed tiered retrieval. Answers are grounded in wiki pages with [[wikilink]] citations." });
-    const queryMessages = querySection.createDiv({ cls: "mok-wiki-query-messages" });
-    for (const msg of this.wikiQueryMessages) {
-      const msgEl = queryMessages.createDiv({ cls: `mok-wiki-msg mok-wiki-msg-${msg.role}` });
-      msgEl.createEl("strong", { text: msg.role === "user" ? "You" : "Wiki" });
-      const bodyEl = msgEl.createDiv({ cls: "mok-wiki-msg-body" });
-      this.renderWikiMessageContent(bodyEl, msg.content);
-    }
-    const queryInput = querySection.createEl("textarea", {
-      cls: "gemini-chat-input mok-wiki-query-input",
-      placeholder: "Ask your wiki..."
-    });
-    queryInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        const query = queryInput.value.trim();
-        if (!query)
-          return;
-        this.handleWikiQuery(query, queryInput, queryMessages);
+  }
+  renderWikiStagingSection(panel) {
+    const { content: stagingSection } = this.createWikiSection(panel, "staging", "Staging Review", true);
+    stagingSection.createEl("p", { cls: "setting-item-description", text: "LLM-generated pages waiting in _staging/ for human review before merging into the wiki." });
+    const stagingList = stagingSection.createDiv({ cls: "mok-wiki-staging-list" });
+    stagingList.createEl("p", { text: "Loading staged files..." });
+    this.plugin.wikiService.listStagedFiles().then((files) => {
+      stagingList.empty();
+      if (files.length === 0) {
+        stagingList.createEl("p", { cls: "mok-wiki-muted", text: "No staged files." });
+        return;
+      }
+      for (const file of files) {
+        const card = stagingList.createDiv({ cls: "mok-wiki-staging-card" });
+        card.createEl("div", { cls: "mok-wiki-staging-name", text: file.name });
+        const preview = file.content.replace(/---[\s\S]*?---/, "").trim().slice(0, 200);
+        if (preview) {
+          card.createEl("div", { cls: "mok-wiki-staging-preview", text: preview + (file.content.length > 200 ? "..." : "") });
+        }
+        const actions = card.createDiv({ cls: "mok-wiki-staging-actions" });
+        const viewBtn = actions.createEl("button", { cls: "gemini-chat-action-btn", text: "View" });
+        viewBtn.addEventListener("click", () => {
+          this.app.workspace.openLinkText(file.path, "", true);
+        });
+        const approveBtn = actions.createEl("button", { cls: "gemini-chat-action-btn mok-wiki-btn-approve", text: "Approve" });
+        approveBtn.addEventListener("click", async () => {
+          approveBtn.setText("Approving...");
+          approveBtn.setAttr("disabled", "true");
+          const result = await this.plugin.wikiService.approveStagedFile(file.path);
+          new import_obsidian4.Notice(result.ok ? result.output : result.error || "Approval failed");
+          this.renderActiveTab();
+        });
+        const rejectBtn = actions.createEl("button", { cls: "gemini-chat-action-btn mok-wiki-btn-reject", text: "Reject" });
+        rejectBtn.addEventListener("click", async () => {
+          rejectBtn.setText("Rejecting...");
+          rejectBtn.setAttr("disabled", "true");
+          const result = await this.plugin.wikiService.rejectStagedFile(file.path);
+          new import_obsidian4.Notice(result.ok ? result.output : result.error || "Rejection failed");
+          this.renderActiveTab();
+        });
       }
     });
-    const queryBtn = querySection.createEl("button", {
-      cls: "gemini-chat-send-btn",
-      text: "\u27A4"
+  }
+  renderWikiMaintainSection(panel) {
+    const { content: maintainSection } = this.createWikiSection(panel, "maintain", "Maintain");
+    maintainSection.createEl("p", { cls: "setting-item-description", text: "Wiki maintenance operations: cross-linking, deduplication, rebuild, and sync." });
+    const btnGrid = maintainSection.createDiv({ cls: "mok-wiki-btn-grid" });
+    const ops = [
+      { label: "Cross-linker", action: () => this.plugin.wikiService.runCrossLinker(), description: "Add missing [[wikilinks]] between related pages" },
+      { label: "Dedup", action: () => this.plugin.wikiService.runDedup(), description: "Find and consolidate duplicate pages" },
+      { label: "Rebuild", action: () => this.plugin.wikiService.runRebuild(), description: "Rebuild wiki index and manifest" },
+      { label: "Sync", action: () => this.plugin.wikiService.runSync(), description: "Sync wiki state with vault changes" }
+    ];
+    const resultEl = maintainSection.createDiv({ cls: "mok-wiki-result-output" });
+    for (const op of ops) {
+      const btn = btnGrid.createEl("button", { cls: "gemini-chat-action-btn", text: op.label });
+      btn.setAttr("title", op.description);
+      btn.addEventListener("click", async () => {
+        btn.setText(`${op.label}...`);
+        btn.setAttr("disabled", "true");
+        resultEl.empty();
+        const result = await op.action();
+        resultEl.empty();
+        if (result.error) {
+          resultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+        } else {
+          resultEl.createEl("pre", { cls: "mok-wiki-pre", text: result.output || "Done." });
+        }
+        btn.removeAttribute("disabled");
+        btn.setText(op.label);
+      });
+    }
+  }
+  renderWikiSessionsSection(panel) {
+    const { content: sessionsSection } = this.createWikiSection(panel, "sessions", "Sessions");
+    sessionsSection.createEl("p", { cls: "setting-item-description", text: "Build session brain from journal entries, query session memory, and view session clusters." });
+    const btnRow = sessionsSection.createDiv({ cls: "mok-wiki-btn-grid" });
+    const resultEl = sessionsSection.createDiv({ cls: "mok-wiki-result-output" });
+    const buildBtn = btnRow.createEl("button", { cls: "gemini-chat-action-btn", text: "Build Sessions" });
+    buildBtn.addEventListener("click", async () => {
+      buildBtn.setText("Building...");
+      buildBtn.setAttr("disabled", "true");
+      resultEl.empty();
+      const result = await this.plugin.wikiService.runSessionsBuild();
+      resultEl.empty();
+      if (result.error)
+        resultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+      else
+        resultEl.createEl("pre", { cls: "mok-wiki-pre", text: result.output || "Done." });
+      buildBtn.removeAttribute("disabled");
+      buildBtn.setText("Build Sessions");
     });
-    queryBtn.addEventListener("click", () => {
-      const query = queryInput.value.trim();
+    const clustersBtn = btnRow.createEl("button", { cls: "gemini-chat-action-btn", text: "View Clusters" });
+    clustersBtn.addEventListener("click", async () => {
+      clustersBtn.setText("Loading...");
+      clustersBtn.setAttr("disabled", "true");
+      resultEl.empty();
+      const result = await this.plugin.wikiService.runSessionsClusters();
+      resultEl.empty();
+      if (result.error)
+        resultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+      else
+        resultEl.createEl("pre", { cls: "mok-wiki-pre", text: result.output || "No clusters found." });
+      clustersBtn.removeAttribute("disabled");
+      clustersBtn.setText("View Clusters");
+    });
+    const queryRow = sessionsSection.createDiv({ cls: "mok-wiki-input-row" });
+    const sessionInput = queryRow.createEl("input", {
+      cls: "mok-wiki-inline-input",
+      type: "text",
+      placeholder: "Query session memory..."
+    });
+    const sessionQueryBtn = queryRow.createEl("button", { cls: "gemini-chat-action-btn", text: "Query" });
+    sessionQueryBtn.addEventListener("click", async () => {
+      const query = sessionInput.value.trim();
       if (!query)
         return;
-      this.handleWikiQuery(query, queryInput, queryMessages);
+      sessionQueryBtn.setText("Querying...");
+      sessionQueryBtn.setAttr("disabled", "true");
+      resultEl.empty();
+      const result = await this.plugin.wikiService.runSessionsQuery(query);
+      resultEl.empty();
+      if (result.error)
+        resultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+      else {
+        const bodyEl = resultEl.createDiv({ cls: "mok-wiki-msg-body" });
+        this.renderWikiMessageContent(bodyEl, result.output || "No results.");
+      }
+      sessionQueryBtn.removeAttribute("disabled");
+      sessionQueryBtn.setText("Query");
     });
+    sessionInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        sessionQueryBtn.click();
+      }
+    });
+  }
+  renderWikiTrustSection(panel) {
+    const { content: trustSection } = this.createWikiSection(panel, "trust", "Trust Ledger");
+    trustSection.createEl("p", { cls: "setting-item-description", text: "Provenance tracking: every claim tagged extracted, ^[inferred], or ^[ambiguous]. Review trust status per page." });
+    const trustTable = trustSection.createDiv({ cls: "mok-wiki-trust-table" });
+    trustTable.createEl("p", { text: "Loading trust ledger..." });
+    this.plugin.wikiService.readTrustLedger().then((entries) => {
+      trustTable.empty();
+      if (entries.length === 0) {
+        trustTable.createEl("p", { cls: "mok-wiki-muted", text: "No trust entries yet. Run trust-check on wiki pages to populate." });
+        return;
+      }
+      const table = trustTable.createEl("table", { cls: "mok-wiki-table" });
+      const thead = table.createEl("thead");
+      const headerRow = thead.createEl("tr");
+      headerRow.createEl("th", { text: "Page" });
+      headerRow.createEl("th", { text: "Status" });
+      headerRow.createEl("th", { text: "Confidence" });
+      const tbody = table.createEl("tbody");
+      for (const entry of entries.slice(0, 50)) {
+        const row = tbody.createEl("tr");
+        const pageCell = row.createEl("td");
+        const pageLink = pageCell.createEl("a", { cls: "mok-wiki-source-link", text: entry.page });
+        pageLink.addEventListener("click", (e) => {
+          e.preventDefault();
+          this.app.workspace.openLinkText(entry.page, "", false);
+        });
+        const statusCls = entry.status === "trusted" ? "mok-wiki-lint-pass" : entry.status === "unverified" ? "mok-wiki-lint-warn" : "";
+        row.createEl("td", { cls: statusCls, text: entry.status });
+        row.createEl("td", { text: entry.confidence != null ? `${Math.round(entry.confidence * 100)}%` : "-" });
+      }
+      if (entries.length > 50) {
+        trustTable.createEl("p", { cls: "mok-wiki-muted", text: `Showing 50 of ${entries.length} entries.` });
+      }
+    });
+    const checkRow = trustSection.createDiv({ cls: "mok-wiki-input-row" });
+    const trustInput = checkRow.createEl("input", {
+      cls: "mok-wiki-inline-input",
+      type: "text",
+      placeholder: "Page name to trust-check..."
+    });
+    const resultEl = trustSection.createDiv({ cls: "mok-wiki-result-output" });
+    const trustCheckBtn = checkRow.createEl("button", { cls: "gemini-chat-action-btn", text: "Check" });
+    trustCheckBtn.addEventListener("click", async () => {
+      const page = trustInput.value.trim();
+      if (!page)
+        return;
+      trustCheckBtn.setText("Checking...");
+      trustCheckBtn.setAttr("disabled", "true");
+      resultEl.empty();
+      const result = await this.plugin.wikiService.runTrustCheck(page);
+      resultEl.empty();
+      if (result.error)
+        resultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+      else
+        resultEl.createEl("pre", { cls: "mok-wiki-pre", text: result.output || "Done." });
+      trustCheckBtn.removeAttribute("disabled");
+      trustCheckBtn.setText("Check");
+    });
+    trustInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        trustCheckBtn.click();
+      }
+    });
+    const trustRecordBtn = checkRow.createEl("button", { cls: "gemini-chat-action-btn", text: "Record" });
+    trustRecordBtn.addEventListener("click", async () => {
+      const page = trustInput.value.trim();
+      if (!page)
+        return;
+      trustRecordBtn.setText("Recording...");
+      trustRecordBtn.setAttr("disabled", "true");
+      resultEl.empty();
+      const result = await this.plugin.wikiService.runTrustRecord(page);
+      resultEl.empty();
+      if (result.error)
+        resultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+      else
+        resultEl.createEl("pre", { cls: "mok-wiki-pre", text: result.output || "Trust recorded." });
+      trustRecordBtn.removeAttribute("disabled");
+      trustRecordBtn.setText("Record");
+      this.renderActiveTab();
+    });
+  }
+  renderWikiExportSection(panel) {
+    const { content: exportSection } = this.createWikiSection(panel, "export", "Export");
+    exportSection.createEl("p", { cls: "setting-item-description", text: "Export wiki graph in various formats for analysis or visualization." });
+    const resultEl = exportSection.createDiv({ cls: "mok-wiki-result-output" });
+    const formats = [
+      { id: "json", label: "JSON" },
+      { id: "graphml", label: "GraphML" },
+      { id: "cypher", label: "Cypher" },
+      { id: "html", label: "HTML" }
+    ];
+    const btnRow = exportSection.createDiv({ cls: "mok-wiki-btn-grid" });
+    for (const fmt of formats) {
+      const btn = btnRow.createEl("button", { cls: "gemini-chat-action-btn", text: fmt.label });
+      btn.addEventListener("click", async () => {
+        btn.setText(`${fmt.label}...`);
+        btn.setAttr("disabled", "true");
+        resultEl.empty();
+        const result = await this.plugin.wikiService.runExport(fmt.id);
+        resultEl.empty();
+        if (result.error) {
+          resultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+        } else {
+          resultEl.createEl("pre", { cls: "mok-wiki-pre", text: result.output.slice(0, 2e3) || "Export complete." });
+          if (result.output.length > 2e3) {
+            resultEl.createEl("p", { cls: "mok-wiki-muted", text: `Output truncated (${result.output.length} chars total).` });
+          }
+        }
+        btn.removeAttribute("disabled");
+        btn.setText(fmt.label);
+      });
+    }
+  }
+  renderWikiManifestSection(panel) {
+    const { content: manifestSection } = this.createWikiSection(panel, "manifest", "Manifest");
+    manifestSection.createEl("p", { cls: "setting-item-description", text: ".manifest.json tracks page hashes for change detection and delta syncing." });
+    const manifestContent = manifestSection.createDiv({ cls: "mok-wiki-manifest-content" });
+    manifestContent.createEl("p", { text: "Loading manifest..." });
+    this.plugin.wikiService.readManifest().then((entries) => {
+      manifestContent.empty();
+      if (entries.length === 0) {
+        manifestContent.createEl("p", { cls: "mok-wiki-muted", text: "No manifest found. Run setup or sync first." });
+        return;
+      }
+      manifestContent.createEl("p", { cls: "mok-wiki-muted", text: `${entries.length} tracked pages` });
+      const table = manifestContent.createEl("table", { cls: "mok-wiki-table" });
+      const thead = table.createEl("thead");
+      const headerRow = thead.createEl("tr");
+      headerRow.createEl("th", { text: "Path" });
+      headerRow.createEl("th", { text: "Hash" });
+      const tbody = table.createEl("tbody");
+      for (const entry of entries.slice(0, 100)) {
+        const row = tbody.createEl("tr");
+        const pathCell = row.createEl("td");
+        const pathLink = pathCell.createEl("a", { cls: "mok-wiki-source-link", text: entry.path });
+        pathLink.addEventListener("click", (e) => {
+          e.preventDefault();
+          this.app.workspace.openLinkText(entry.path, "", false);
+        });
+        row.createEl("td", { cls: "mok-wiki-hash", text: entry.hash.slice(0, 12) + "..." });
+      }
+      if (entries.length > 100) {
+        manifestContent.createEl("p", { cls: "mok-wiki-muted", text: `Showing 100 of ${entries.length} entries.` });
+      }
+    });
+  }
+  renderWikiSpecialFilesSection(panel) {
+    const { content: specialSection } = this.createWikiSection(panel, "special-files", "Special Files");
+    specialSection.createEl("p", { cls: "setting-item-description", text: "Quick access to wiki index, activity log, and hot topics." });
+    const files = [
+      { name: "index.md", label: "Index", description: "Wiki table of contents" },
+      { name: "log.md", label: "Log", description: "Activity log of recent changes" },
+      { name: "hot.md", label: "Hot Topics", description: "Currently trending topics" },
+      { name: "_insights.md", label: "Insights", description: "Generated insights summary" }
+    ];
+    const resultEl = specialSection.createDiv({ cls: "mok-wiki-result-output" });
+    const btnRow = specialSection.createDiv({ cls: "mok-wiki-btn-grid" });
+    for (const file of files) {
+      const btn = btnRow.createEl("button", { cls: "gemini-chat-action-btn", text: file.label });
+      btn.setAttr("title", file.description);
+      btn.addEventListener("click", async () => {
+        const exists = this.app.vault.getAbstractFileByPath(file.name);
+        if (exists instanceof import_obsidian4.TFile) {
+          await this.app.workspace.openLinkText(file.name, "", true);
+        } else {
+          resultEl.empty();
+          const content = await this.plugin.wikiService.readSpecialFile(file.name);
+          if (content) {
+            const bodyEl = resultEl.createDiv({ cls: "mok-wiki-msg-body" });
+            this.renderWikiMessageContent(bodyEl, content.slice(0, 3e3));
+          } else {
+            resultEl.createEl("p", { cls: "mok-wiki-muted", text: `${file.name} not found.` });
+          }
+        }
+      });
+    }
   }
   renderWikiMessageContent(container, content) {
     const processed = content.replace(/\[\[([^\]]+)\]\]/g, (match, title) => {
@@ -6038,6 +6400,7 @@ ${content.slice(0, 4e3)}`.toLowerCase();
 };
 
 // src/wiki-service.ts
+var import_obsidian6 = require("obsidian");
 var import_child_process2 = require("child_process");
 var import_fs2 = require("fs");
 var import_os2 = require("os");
@@ -6062,7 +6425,6 @@ var WikiService = class {
         return configured;
     }
     const candidates = [
-      "obsidian-wiki",
       (0, import_path2.join)((0, import_os2.homedir)(), ".local", "bin", "obsidian-wiki"),
       (0, import_path2.join)((0, import_os2.homedir)(), ".cargo", "bin", "obsidian-wiki"),
       "/usr/local/bin/obsidian-wiki",
@@ -6088,6 +6450,26 @@ var WikiService = class {
     }
     return null;
   }
+  getWikiVaultPath() {
+    if (this.plugin.settings.wikiVaultPath) {
+      return this.plugin.settings.wikiVaultPath;
+    }
+    return this.plugin.getVaultPath();
+  }
+  getEnv() {
+    const env = { OBSIDIAN_VAULT_PATH: this.getWikiVaultPath() };
+    if (this.plugin.settings.wikiStagedWrites) {
+      env.WIKI_STAGED_WRITES = "1";
+    }
+    return env;
+  }
+  requireCli() {
+    const cliPath = this.resolveCliPath();
+    if (!cliPath)
+      throw new Error("obsidian-wiki CLI not found. Install with: pip install obsidian-wiki");
+    return cliPath;
+  }
+  // ── Status & Setup ──────────────────────────────────────────────────
   async checkInstallation() {
     const cliPath = this.resolveCliPath();
     const vaultPath = this.getWikiVaultPath();
@@ -6099,7 +6481,11 @@ var WikiService = class {
       pageCount: 0,
       categories: [],
       hasManifest: false,
-      hasIndex: false
+      hasIndex: false,
+      hasLog: false,
+      hasHot: false,
+      hasTrustLedger: false,
+      stagingCount: 0
     };
     if (!cliPath) {
       result.error = "obsidian-wiki CLI not found. Install with: pip install obsidian-wiki";
@@ -6107,10 +6493,7 @@ var WikiService = class {
     }
     result.installed = true;
     try {
-      const output = await this.exec(cliPath, ["doctor"], 1e4);
-      if (output.exitCode === 0) {
-        result.installed = true;
-      }
+      await this.exec(cliPath, ["doctor"], 1e4);
     } catch (e) {
       result.error = "obsidian-wiki doctor check failed";
     }
@@ -6118,77 +6501,90 @@ var WikiService = class {
       const vault = this.plugin.app.vault;
       result.hasManifest = !!vault.getAbstractFileByPath(".manifest.json");
       result.hasIndex = !!vault.getAbstractFileByPath("index.md");
+      result.hasLog = !!vault.getAbstractFileByPath("log.md");
+      result.hasHot = !!vault.getAbstractFileByPath("hot.md");
+      result.hasTrustLedger = !!vault.getAbstractFileByPath("_meta/trust-ledger.json");
+      const staging = vault.getAbstractFileByPath("_staging");
+      if (staging && staging instanceof import_obsidian6.TFolder) {
+        result.stagingCount = staging.children.filter((f) => f instanceof import_obsidian6.TFile && f.extension === "md").length;
+      }
       const categories = ["concepts", "entities", "skills", "references", "synthesis", "journal", "projects"];
       result.categories = categories.filter((c) => !!vault.getAbstractFileByPath(c));
       let count = 0;
       for (const cat of result.categories) {
         const folder = vault.getAbstractFileByPath(cat);
-        if (folder && "children" in folder) {
-          count += folder.children.filter((f) => f.extension === "md").length;
+        if (folder && folder instanceof import_obsidian6.TFolder) {
+          count += this.countMarkdownFiles(folder);
         }
       }
       result.pageCount = count;
     }
     return result;
   }
-  async runQuery(query) {
-    const cliPath = this.resolveCliPath();
-    if (!cliPath) {
-      return { answer: "", sources: [], error: "obsidian-wiki CLI not found" };
+  countMarkdownFiles(folder) {
+    let count = 0;
+    for (const child of folder.children) {
+      if (child instanceof import_obsidian6.TFile && child.extension === "md")
+        count++;
+      if (child instanceof import_obsidian6.TFolder)
+        count += this.countMarkdownFiles(child);
     }
+    return count;
+  }
+  async runSetup() {
+    const cli = this.requireCli();
     const vaultPath = this.getWikiVaultPath();
-    if (!vaultPath) {
-      return { answer: "", sources: [], error: "Wiki vault path not configured" };
-    }
+    if (!vaultPath)
+      return { ok: false, output: "", error: "Wiki vault path not configured." };
     try {
-      const output = await this.exec(cliPath, ["query", query], 3e4, { OBSIDIAN_VAULT_PATH: vaultPath });
-      const sources = [];
-      const lines = output.stdout.split("\n");
-      for (const line of lines) {
-        const match = line.match(/\[\[([^\]]+)\]\]/g);
-        if (match) {
-          sources.push(...match.map((m) => m.replace(/^\[\[|\]\]$/g, "")));
-        }
-      }
-      return {
-        answer: output.stdout.trim(),
-        sources: [...new Set(sources)],
-        error: output.exitCode !== 0 ? output.stderr.trim() : void 0
-      };
-    } catch (error) {
-      return { answer: "", sources: [], error: (error == null ? void 0 : error.message) || "Query failed" };
+      const out = await this.exec(cli, ["setup", "--vault", vaultPath], 3e4);
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
     }
   }
-  async runLint() {
-    const cliPath = this.resolveCliPath();
-    if (!cliPath) {
-      return { ok: false, checks: [], summary: "", error: "obsidian-wiki CLI not found" };
-    }
-    const vaultPath = this.getWikiVaultPath();
-    if (!vaultPath) {
-      return { ok: false, checks: [], summary: "", error: "Wiki vault path not configured" };
-    }
+  // ── Query ────────────────────────────────────────────────────────────
+  async runQuery(query) {
+    const cli = this.requireCli();
     try {
-      const output = await this.exec(cliPath, ["lint"], 3e4, { OBSIDIAN_VAULT_PATH: vaultPath });
-      const checks = [];
-      let currentCheck = null;
-      for (const line of output.stdout.split("\n")) {
-        const passMatch = line.match(/^\s*(PASS|OK|✓)\s+(.+)/i);
-        const failMatch = line.match(/^\s*(FAIL|ERROR|✗|✘)\s+(.+)/i);
-        const warnMatch = line.match(/^\s*(WARN|WARNING|⚠)\s+(.+)/i);
-        if (passMatch) {
-          currentCheck = { name: passMatch[2].trim(), status: "pass", message: passMatch[2].trim() };
-          checks.push(currentCheck);
-        } else if (failMatch) {
-          currentCheck = { name: failMatch[2].trim(), status: "fail", message: failMatch[2].trim(), items: [] };
-          checks.push(currentCheck);
-        } else if (warnMatch) {
-          currentCheck = { name: warnMatch[2].trim(), status: "warn", message: warnMatch[2].trim(), items: [] };
-          checks.push(currentCheck);
-        } else if (currentCheck && currentCheck.items && line.trim().startsWith("-")) {
-          currentCheck.items.push(line.trim().slice(1).trim());
-        }
+      const out = await this.exec(cli, ["query", query], 3e4, this.getEnv());
+      const sources = [];
+      for (const line of out.stdout.split("\n")) {
+        const matches = line.match(/\[\[([^\]]+)\]\]/g);
+        if (matches)
+          sources.push(...matches.map((m) => m.replace(/^\[\[|\]\]$/g, "")));
       }
+      return { answer: out.stdout.trim(), sources: [...new Set(sources)], error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { answer: "", sources: [], error: (e == null ? void 0 : e.message) || "Query failed" };
+    }
+  }
+  async runGraphQuery(query) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, ["graph-query", query], 2e4, this.getEnv());
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  async runContextPack(topic, budget = 8e3) {
+    const cli = this.resolveCliPath();
+    if (!cli)
+      return "";
+    try {
+      const out = await this.exec(cli, ["context-pack", "--budget", String(budget), "--json", topic], 15e3, this.getEnv());
+      return out.stdout.trim();
+    } catch (e) {
+      return "";
+    }
+  }
+  // ── Lint & Maintenance ──────────────────────────────────────────────
+  async runLint() {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, ["lint"], 3e4, this.getEnv());
+      const checks = this.parseLintOutput(out.stdout);
       const failCount = checks.filter((c) => c.status === "fail").length;
       const warnCount = checks.filter((c) => c.status === "warn").length;
       const passCount = checks.filter((c) => c.status === "pass").length;
@@ -6196,100 +6592,258 @@ var WikiService = class {
         ok: failCount === 0,
         checks,
         summary: `${passCount} passed, ${warnCount} warnings, ${failCount} failed`,
-        error: output.exitCode !== 0 ? output.stderr.trim() : void 0
+        error: out.exitCode !== 0 ? out.stderr.trim() : void 0
       };
-    } catch (error) {
-      return { ok: false, checks: [], summary: "", error: (error == null ? void 0 : error.message) || "Lint failed" };
+    } catch (e) {
+      return { ok: false, checks: [], summary: "", error: e == null ? void 0 : e.message };
     }
   }
-  async runIngest(sourcePath) {
-    const cliPath = this.resolveCliPath();
-    if (!cliPath) {
-      return { ok: false, pagesCreated: 0, pagesUpdated: 0, message: "", error: "obsidian-wiki CLI not found" };
-    }
-    const vaultPath = this.getWikiVaultPath();
-    if (!vaultPath) {
-      return { ok: false, pagesCreated: 0, pagesUpdated: 0, message: "", error: "Wiki vault path not configured" };
-    }
-    try {
-      const output = await this.exec(cliPath, ["cache-check", sourcePath], 6e4, { OBSIDIAN_VAULT_PATH: vaultPath });
-      let created = 0;
-      let updated = 0;
-      for (const line of output.stdout.split("\n")) {
-        const createMatch = line.match(/created?\s*:?\s*(\d+)/i);
-        const updateMatch = line.match(/updated?\s*:?\s*(\d+)/i);
-        if (createMatch)
-          created = parseInt(createMatch[1]);
-        if (updateMatch)
-          updated = parseInt(updateMatch[1]);
+  parseLintOutput(stdout) {
+    const checks = [];
+    let current = null;
+    for (const line of stdout.split("\n")) {
+      const pass = line.match(/^\s*(PASS|OK|✓)\s+(.+)/i);
+      const fail = line.match(/^\s*(FAIL|ERROR|✗|✘)\s+(.+)/i);
+      const warn = line.match(/^\s*(WARN|WARNING|⚠)\s+(.+)/i);
+      if (pass) {
+        current = { name: pass[2].trim(), status: "pass", message: pass[2].trim() };
+        checks.push(current);
+      } else if (fail) {
+        current = { name: fail[2].trim(), status: "fail", message: fail[2].trim(), items: [] };
+        checks.push(current);
+      } else if (warn) {
+        current = { name: warn[2].trim(), status: "warn", message: warn[2].trim(), items: [] };
+        checks.push(current);
+      } else if ((current == null ? void 0 : current.items) && line.trim().startsWith("-")) {
+        current.items.push(line.trim().slice(1).trim());
       }
-      return {
-        ok: output.exitCode === 0,
-        pagesCreated: created,
-        pagesUpdated: updated,
-        message: output.stdout.trim(),
-        error: output.exitCode !== 0 ? output.stderr.trim() : void 0
-      };
-    } catch (error) {
-      return { ok: false, pagesCreated: 0, pagesUpdated: 0, message: "", error: (error == null ? void 0 : error.message) || "Ingest failed" };
     }
+    return checks;
   }
-  async runSetup() {
-    const cliPath = this.resolveCliPath();
-    if (!cliPath) {
-      return { ok: false, message: "obsidian-wiki CLI not found. Install with: pip install obsidian-wiki" };
-    }
-    const vaultPath = this.getWikiVaultPath();
-    if (!vaultPath) {
-      return { ok: false, message: "Wiki vault path not configured. Set it in settings." };
-    }
-    try {
-      const output = await this.exec(cliPath, ["setup", "--vault", vaultPath], 3e4);
-      return {
-        ok: output.exitCode === 0,
-        message: output.exitCode === 0 ? "Wiki vault initialized successfully." : output.stderr.trim() || "Setup failed."
-      };
-    } catch (error) {
-      return { ok: false, message: (error == null ? void 0 : error.message) || "Setup failed" };
-    }
+  async runCrossLinker() {
+    return this.runCliCommand(["lint", "--consolidate"], 6e4);
   }
-  async runContextPack(topic, budget = 8e3) {
-    const cliPath = this.resolveCliPath();
-    if (!cliPath)
-      return "";
-    const vaultPath = this.getWikiVaultPath();
-    if (!vaultPath)
-      return "";
+  async runDedup() {
+    return this.runCliCommand(["lint", "--consolidate"], 6e4);
+  }
+  async runRebuild() {
+    return this.runCliCommand(["lint", "--consolidate"], 12e4);
+  }
+  async runSync() {
+    return this.runCliCommand(["sync"], 3e4);
+  }
+  // ── Ingest ──────────────────────────────────────────────────────────
+  async runCacheCheck(sourcePath) {
+    return this.runCliCommand(["cache-check", sourcePath], 15e3);
+  }
+  async runCacheUpdate(sourcePath) {
+    return this.runCliCommand(["cache-update", sourcePath], 15e3);
+  }
+  // ── Sessions ────────────────────────────────────────────────────────
+  async runSessionsBuild() {
+    return this.runCliCommand(["sessions-build"], 6e4);
+  }
+  async runSessionsQuery(query) {
+    const cli = this.requireCli();
     try {
-      const output = await this.exec(
-        cliPath,
-        ["context-pack", "--budget", String(budget), "--json", topic],
-        15e3,
-        { OBSIDIAN_VAULT_PATH: vaultPath }
-      );
-      return output.stdout.trim();
+      const out = await this.exec(cli, ["sessions-query", query], 3e4, this.getEnv());
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
     } catch (e) {
-      return "";
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
     }
   }
+  async runSessionsClusters() {
+    return this.runCliCommand(["sessions-clusters"], 3e4);
+  }
+  // ── Trust ───────────────────────────────────────────────────────────
+  async runTrustCheck(page) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, ["trust-check", page], 1e4, this.getEnv());
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  async runTrustRecord(page) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, ["trust-record", page], 1e4, this.getEnv());
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  async readTrustLedger() {
+    try {
+      const file = this.plugin.app.vault.getAbstractFileByPath("_meta/trust-ledger.json");
+      if (!(file instanceof import_obsidian6.TFile))
+        return [];
+      const text = await this.plugin.app.vault.read(file);
+      const data = JSON.parse(text);
+      if (Array.isArray(data))
+        return data;
+      if (data && typeof data === "object") {
+        return Object.entries(data).map(([page, entry]) => {
+          var _a, _b;
+          return {
+            page,
+            status: entry.status || entry.verdict || "unknown",
+            confidence: (_b = (_a = entry.confidence) != null ? _a : entry.score) != null ? _b : 0,
+            reviewer: entry.reviewer || entry.by || "",
+            timestamp: entry.timestamp || entry.date || ""
+          };
+        });
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+  // ── Staging ─────────────────────────────────────────────────────────
+  async listStagedFiles() {
+    const staging = this.plugin.app.vault.getAbstractFileByPath("_staging");
+    if (!staging || !(staging instanceof import_obsidian6.TFolder))
+      return [];
+    const files = [];
+    for (const child of staging.children) {
+      if (child instanceof import_obsidian6.TFile && child.extension === "md") {
+        try {
+          const content = await this.plugin.app.vault.read(child);
+          files.push({ path: child.path, name: child.basename, content });
+        } catch (e) {
+          files.push({ path: child.path, name: child.basename, content: "" });
+        }
+      }
+    }
+    return files;
+  }
+  async approveStagedFile(stagedPath) {
+    const file = this.plugin.app.vault.getAbstractFileByPath(stagedPath);
+    if (!(file instanceof import_obsidian6.TFile))
+      return { ok: false, output: "", error: `File not found: ${stagedPath}` };
+    try {
+      const content = await this.plugin.app.vault.read(file);
+      const targetName = file.basename;
+      let targetPath = "";
+      const categoryMatch = content.match(/^category:\s*(.+)/m);
+      const category = categoryMatch ? categoryMatch[1].trim() : "concepts";
+      targetPath = `${category}/${targetName}.md`;
+      const existing = this.plugin.app.vault.getAbstractFileByPath(targetPath);
+      if (existing instanceof import_obsidian6.TFile) {
+        await this.plugin.app.vault.modify(existing, content);
+      } else {
+        const folder = targetPath.split("/").slice(0, -1).join("/");
+        if (folder)
+          await this.plugin.ensureVaultFolder(folder);
+        await this.plugin.app.vault.create(targetPath, content);
+      }
+      await this.plugin.app.vault.delete(file);
+      return { ok: true, output: `Approved: ${stagedPath} \u2192 ${targetPath}` };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  async rejectStagedFile(stagedPath) {
+    const file = this.plugin.app.vault.getAbstractFileByPath(stagedPath);
+    if (!(file instanceof import_obsidian6.TFile))
+      return { ok: false, output: "", error: `File not found: ${stagedPath}` };
+    try {
+      await this.plugin.app.vault.delete(file);
+      return { ok: true, output: `Rejected and deleted: ${stagedPath}` };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  // ── Manifest ────────────────────────────────────────────────────────
+  async readManifest() {
+    try {
+      const file = this.plugin.app.vault.getAbstractFileByPath(".manifest.json");
+      if (!(file instanceof import_obsidian6.TFile))
+        return [];
+      const text = await this.plugin.app.vault.read(file);
+      const data = JSON.parse(text);
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        return Object.entries(data).filter(([key]) => key !== "last_commit_synced").map(([path, hash]) => ({ path, hash: String(hash) }));
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+  // ── Export ───────────────────────────────────────────────────────────
+  async runExport(format) {
+    const cli = this.requireCli();
+    try {
+      const args = ["graph-analyse"];
+      const out = await this.exec(cli, args, 3e4, this.getEnv());
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  // ── AST Extract ─────────────────────────────────────────────────────
+  async runAstExtract(filePath) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, ["ast-extract", filePath], 15e3, this.getEnv());
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  // ── Skills ──────────────────────────────────────────────────────────
   async listSkills() {
-    const cliPath = this.resolveCliPath();
-    if (!cliPath)
+    const cli = this.resolveCliPath();
+    if (!cli)
       return [];
     try {
-      const output = await this.exec(cliPath, ["list"], 1e4);
-      return output.stdout.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#") && !l.startsWith("-"));
+      const out = await this.exec(cli, ["list"], 1e4);
+      return out.stdout.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#") && !l.startsWith("-"));
     } catch (e) {
       return [];
     }
   }
-  getWikiVaultPath() {
-    if (this.plugin.settings.wikiVaultPath) {
-      return this.plugin.settings.wikiVaultPath;
+  async getSkillInfo(skillName) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, ["info", skillName], 1e4);
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
     }
-    return this.plugin.getVaultPath();
   }
-  async exec(command, args, timeout = 3e4, extraEnv) {
+  // ── Read vault special files ────────────────────────────────────────
+  async readSpecialFile(name) {
+    try {
+      const file = this.plugin.app.vault.getAbstractFileByPath(name);
+      if (file instanceof import_obsidian6.TFile)
+        return await this.plugin.app.vault.read(file);
+    } catch (e) {
+    }
+    return "";
+  }
+  // ── Generic CLI runner ──────────────────────────────────────────────
+  async runCliCommand(args, timeout = 3e4) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, args, timeout, this.getEnv());
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  async runArbitrary(args, timeout = 3e4, onChunk) {
+    const cli = this.requireCli();
+    try {
+      const out = await this.exec(cli, args, timeout, this.getEnv(), onChunk);
+      return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
+    } catch (e) {
+      return { ok: false, output: "", error: e == null ? void 0 : e.message };
+    }
+  }
+  // ── Process execution ───────────────────────────────────────────────
+  async exec(command, args, timeout = 3e4, extraEnv, onChunk) {
     return new Promise((resolve, reject) => {
       const env = { ...process.env, ...extraEnv };
       const child = (0, import_child_process2.spawn)(command, args, {
@@ -6302,7 +6856,10 @@ var WikiService = class {
       let stdout = "";
       let stderr = "";
       child.stdout.on("data", (data) => {
-        stdout += data.toString();
+        const chunk = data.toString();
+        stdout += chunk;
+        if (onChunk)
+          onChunk(chunk);
       });
       child.stderr.on("data", (data) => {
         stderr += data.toString();
@@ -6320,7 +6877,7 @@ var WikiService = class {
 };
 
 // src/main.ts
-var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
+var GeminiSyncPlugin = class extends import_obsidian7.Plugin {
   async onload() {
     console.log("Loading Master of Knowledge Plugin");
     await this.loadSettings();
@@ -6353,7 +6910,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
       name: "Force Sync All Files",
       callback: async () => {
         if (!this.settings.apiKey) {
-          new import_obsidian6.Notice("Please configure your Gemini API key first");
+          new import_obsidian7.Notice("Please configure your Gemini API key first");
           return;
         }
         await this.syncEngine.fullSync();
@@ -6371,11 +6928,75 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
       name: "Wiki Lint",
       callback: async () => {
         if (!this.settings.wikiEnabled) {
-          new import_obsidian6.Notice("Enable Wiki integration in settings first");
+          new import_obsidian7.Notice("Enable Wiki integration in settings first");
           return;
         }
         const result = await this.wikiService.runLint();
-        new import_obsidian6.Notice(result.ok ? `Wiki lint passed: ${result.summary}` : `Wiki lint: ${result.summary}`);
+        new import_obsidian7.Notice(result.ok ? `Wiki lint passed: ${result.summary}` : `Wiki lint: ${result.summary}`);
+      }
+    });
+    this.addCommand({
+      id: "wiki-setup",
+      name: "Wiki Setup",
+      callback: async () => {
+        if (!this.settings.wikiEnabled) {
+          new import_obsidian7.Notice("Enable Wiki integration in settings first");
+          return;
+        }
+        const result = await this.wikiService.runSetup();
+        new import_obsidian7.Notice(result.ok ? "Wiki vault initialized" : result.error || "Setup failed");
+      }
+    });
+    this.addCommand({
+      id: "wiki-sync",
+      name: "Wiki Sync",
+      callback: async () => {
+        if (!this.settings.wikiEnabled) {
+          new import_obsidian7.Notice("Enable Wiki integration in settings first");
+          return;
+        }
+        const result = await this.wikiService.runSync();
+        new import_obsidian7.Notice(result.ok ? "Wiki synced" : result.error || "Sync failed");
+      }
+    });
+    this.addCommand({
+      id: "wiki-cross-linker",
+      name: "Wiki Cross-linker",
+      callback: async () => {
+        if (!this.settings.wikiEnabled) {
+          new import_obsidian7.Notice("Enable Wiki integration in settings first");
+          return;
+        }
+        const result = await this.wikiService.runCrossLinker();
+        new import_obsidian7.Notice(result.ok ? "Cross-linking complete" : result.error || "Cross-linker failed");
+      }
+    });
+    this.addCommand({
+      id: "wiki-sessions-build",
+      name: "Wiki Sessions Build",
+      callback: async () => {
+        if (!this.settings.wikiEnabled) {
+          new import_obsidian7.Notice("Enable Wiki integration in settings first");
+          return;
+        }
+        const result = await this.wikiService.runSessionsBuild();
+        new import_obsidian7.Notice(result.ok ? "Session brain built" : result.error || "Sessions build failed");
+      }
+    });
+    this.addCommand({
+      id: "wiki-export",
+      name: "Wiki Graph Export",
+      callback: async () => {
+        if (!this.settings.wikiEnabled) {
+          new import_obsidian7.Notice("Enable Wiki integration in settings first");
+          return;
+        }
+        const result = await this.wikiService.runExport("json");
+        if (result.ok) {
+          new import_obsidian7.Notice("Wiki graph exported");
+        } else {
+          new import_obsidian7.Notice(result.error || "Export failed");
+        }
       }
     });
     if (this.settings.apiKey && this.settings.syncFolders.length > 0) {
@@ -6447,7 +7068,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
       const line = `${JSON.stringify(logEntry)}
 `;
       const existing = this.app.vault.getAbstractFileByPath(filePath);
-      if (existing instanceof import_obsidian6.TFile) {
+      if (existing instanceof import_obsidian7.TFile) {
         await this.app.vault.append(existing, line);
       } else {
         await this.app.vault.create(filePath, line);
@@ -6477,7 +7098,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
       const root = this.normalizeFolder(this.settings.workspaceFolder, DEFAULT_SETTINGS.workspaceFolder);
       const filePath = `${root}/logs/budget-${month}.jsonl`;
       const existing = this.app.vault.getAbstractFileByPath(filePath);
-      if (!(existing instanceof import_obsidian6.TFile))
+      if (!(existing instanceof import_obsidian7.TFile))
         return 0;
       const text = await this.app.vault.cachedRead(existing);
       const total = text.split("\n").map((line) => line.trim()).filter(Boolean).reduce((sum, line) => {
@@ -6528,7 +7149,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
   registerFileEvents() {
     this.registerEvent(
       this.app.vault.on("create", async (file) => {
-        if (this.settings.apiKey && file instanceof import_obsidian6.TFile && this.shouldSync(file)) {
+        if (this.settings.apiKey && file instanceof import_obsidian7.TFile && this.shouldSync(file)) {
           console.log("File created:", file.path);
           await this.syncEngine.handleFileCreate(file);
         }
@@ -6536,7 +7157,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("modify", async (file) => {
-        if (this.settings.apiKey && file instanceof import_obsidian6.TFile && this.shouldSync(file)) {
+        if (this.settings.apiKey && file instanceof import_obsidian7.TFile && this.shouldSync(file)) {
           console.log("File modified:", file.path);
           await this.syncEngine.handleFileModify(file);
         }
@@ -6544,7 +7165,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("delete", async (file) => {
-        if (this.settings.apiKey && file instanceof import_obsidian6.TFile && this.shouldSync(file)) {
+        if (this.settings.apiKey && file instanceof import_obsidian7.TFile && this.shouldSync(file)) {
           console.log("File deleted:", file.path);
           await this.syncEngine.handleFileDelete(file);
         }
@@ -6552,7 +7173,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("rename", async (file, oldPath) => {
-        if (file instanceof import_obsidian6.TFile) {
+        if (file instanceof import_obsidian7.TFile) {
           const wasInSyncFolder = this.isInSyncFolder(oldPath);
           const isInSyncFolder = this.shouldSync(file);
           if (this.settings.apiKey && (wasInSyncFolder || isInSyncFolder)) {
@@ -6657,7 +7278,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
       "- Avoid stiff translation tone; write as a practical Obsidian note the user can keep."
     ].join("\n");
     const existing = this.app.vault.getAbstractFileByPath(skillPath);
-    if (existing instanceof import_obsidian6.TFile) {
+    if (existing instanceof import_obsidian7.TFile) {
       await this.app.vault.modify(existing, content);
     } else {
       await this.app.vault.create(skillPath, content);
