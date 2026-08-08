@@ -69,6 +69,7 @@ export class ChatView extends ItemView {
 	private dashboardContentEl: HTMLElement;
 	private activeTab: DashboardTab = 'chat';
 	private citationPreviewEl: HTMLElement | null = null;
+	private activeRecordKindFilter: string | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: GeminiSyncPlugin) {
 		super(leaf);
@@ -219,6 +220,9 @@ export class ChatView extends ItemView {
 		}
 
 		this.renderConversationToolbar();
+		if (this.activeTab === 'chat') {
+			this.renderRecordKindFilter(this.dashboardContentEl);
+		}
 		this.messagesContainer = this.dashboardContentEl.createDiv({ cls: 'gemini-chat-messages' });
 		const list = this.activeTab === 'agent' ? this.agentMessages : this.messages;
 		if (list.length === 0) {
@@ -2123,6 +2127,50 @@ export class ChatView extends ItemView {
 		});
 	}
 
+	private parseFrontmatter(content: string): Record<string, string> {
+		const result: Record<string, string> = {};
+		const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
+		if (!match) return result;
+		for (const line of match[1].split('\n')) {
+			const sep = line.indexOf(':');
+			if (sep < 0) continue;
+			const key = line.slice(0, sep).trim();
+			const val = line.slice(sep + 1).trim();
+			if (key && val) result[key] = val;
+		}
+		return result;
+	}
+
+	private renderRecordKindFilter(container: HTMLElement) {
+		const filterBar = container.createDiv({ cls: 'mok-record-kind-bar' });
+		const kinds = [
+			{ key: null, label: 'All', icon: '' },
+			{ key: 'event', label: 'Event', icon: '📌' },
+			{ key: 'thought', label: 'Thought', icon: '💭' },
+			{ key: 'idea', label: 'Idea', icon: '💡' },
+			{ key: 'decision', label: 'Decision', icon: '✅' },
+			{ key: 'question', label: 'Question', icon: '❓' },
+		];
+		for (const kind of kinds) {
+			const isActive = this.activeRecordKindFilter === kind.key;
+			const chip = filterBar.createEl('button', {
+				cls: isActive ? 'mok-record-kind-chip mok-record-kind-chip-active' : 'mok-record-kind-chip',
+				text: kind.icon ? `${kind.icon} ${kind.label}` : kind.label,
+			});
+			chip.setAttr('aria-pressed', String(isActive));
+			chip.addEventListener('click', () => {
+				this.activeRecordKindFilter = kind.key;
+				this.renderActiveTab();
+			});
+		}
+		if (this.activeRecordKindFilter) {
+			filterBar.createSpan({
+				cls: 'mok-record-kind-hint',
+				text: `Filtering by ${this.activeRecordKindFilter}`,
+			});
+		}
+	}
+
 	private async sendMessage() {
 		const text = this.inputEl.value.trim();
 		if (!text || this.isLoading) return;
@@ -2204,7 +2252,7 @@ export class ChatView extends ItemView {
 						this.renderActiveTab();
 					}
 				})
-				: await this.plugin.geminiService.chat(text);
+				: await this.plugin.geminiService.chat(text, this.activeRecordKindFilter || undefined);
 
 			if (streamingMessage) {
 				streamingMessage.content = response.content;
@@ -2552,7 +2600,28 @@ export class ChatView extends ItemView {
 		const file = this.resolveCitationFile(citation.sourcePath);
 		const title = file?.basename || this.getCitationTitle(citation.sourcePath);
 
-		row.createEl('div', { cls: 'gemini-chat-citation-title', text: title });
+		const titleRow = row.createDiv({ cls: 'gemini-chat-citation-title-row' });
+		titleRow.createEl('div', { cls: 'gemini-chat-citation-title', text: title });
+
+		if (file) {
+			this.app.vault.cachedRead(file).then(content => {
+				const fm = this.parseFrontmatter(content);
+				const metaRow = titleRow.createDiv({ cls: 'mok-citation-meta' });
+				if (fm.record_kind) {
+					metaRow.createEl('span', {
+						cls: 'mok-citation-kind',
+						text: fm.record_kind,
+					});
+				}
+				if (fm.source_capture_id) {
+					metaRow.createEl('span', {
+						cls: 'mok-citation-capture-id',
+						text: `capture: ${fm.source_capture_id.slice(0, 8)}`,
+						title: fm.source_capture_id,
+					});
+				}
+			});
+		}
 
 		const actions = row.createDiv({ cls: 'gemini-chat-citation-actions' });
 		const openButton = actions.createEl('button', {
@@ -2607,11 +2676,33 @@ export class ChatView extends ItemView {
 		}
 	}
 
-	private showCitationPreview(target: HTMLElement, file: TFile, preview: string) {
+	private async showCitationPreview(target: HTMLElement, file: TFile, preview: string) {
 		this.hideCitationPreview();
 		const previewEl = document.body.createDiv({ cls: 'gemini-chat-note-popover' });
 		previewEl.createDiv({ cls: 'gemini-chat-note-popover-title', text: file.basename });
 		previewEl.createDiv({ cls: 'gemini-chat-note-popover-path', text: file.path });
+
+		try {
+			const content = await this.app.vault.cachedRead(file);
+			const fm = this.parseFrontmatter(content);
+			if (fm.record_kind || fm.source_capture_id) {
+				const metaEl = previewEl.createDiv({ cls: 'mok-popover-meta' });
+				if (fm.record_kind) {
+					metaEl.createEl('span', { cls: 'mok-citation-kind', text: fm.record_kind });
+				}
+				if (fm.source_capture_id) {
+					metaEl.createEl('span', {
+						cls: 'mok-citation-capture-id',
+						text: `capture: ${fm.source_capture_id.slice(0, 8)}`,
+						title: fm.source_capture_id,
+					});
+				}
+				if (fm.occurred_at) {
+					metaEl.createEl('span', { cls: 'mok-citation-occurred', text: fm.occurred_at });
+				}
+			}
+		} catch { /* ignore */ }
+
 		previewEl.createDiv({ cls: 'gemini-chat-note-popover-body', text: preview });
 		this.citationPreviewEl = previewEl;
 		this.positionCitationPreview(target, previewEl);
