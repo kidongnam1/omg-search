@@ -1,6 +1,6 @@
 # Master of Knowledge
 
-Turn your Obsidian vault into a Gemini File Search and Agent-powered knowledge workspace. Ask your notes, inspect sources, run Antigravity/AGY jobs from inside Obsidian, and apply the result back into notes.
+Turn your Obsidian vault into a Gemini File Search and Agent-powered knowledge workspace. Ask your notes, inspect sources, run Antigravity/AGY jobs from inside Obsidian, and apply the result back into notes. Optionally integrates with [obsidian-wiki](https://github.com/Ar9av/obsidian-wiki) for compiled knowledge management with provenance, confidence tracking, and GraphRAG queries.
 
 ## Features
 
@@ -30,6 +30,14 @@ Turn your Obsidian vault into a Gemini File Search and Agent-powered knowledge w
 - Dashboard budget meter for Gemini API chat usage
 - Agent/Antigravity runs are not counted because they do not use the plugin Gemini API key
 - Budget totals are reconciled from `_omg/logs/budget-YYYY-MM.jsonl`
+
+### Wiki Integration (obsidian-wiki)
+- Optional integration with [obsidian-wiki](https://github.com/Ar9av/obsidian-wiki) for compiled knowledge management
+- **Wiki Tab**: Query your wiki with GraphRAG-backed tiered retrieval, run health checks, and view vault status
+- **Agent Context**: Wiki knowledge is automatically injected into Agent prompts when enabled
+- **Provenance Tracking**: Every claim is tagged `extracted`, `^[inferred]`, or `^[ambiguous]`
+- **Vault Health**: 13 lint checks for broken links, orphans, contradictions, and duplicates
+- **Staged Writes**: Optional human review for LLM-generated pages before merging
 
 ### Smart Status Management
 - **Status Bar**: Shows sync status at a glance
@@ -102,6 +110,11 @@ Turn your Obsidian vault into a Gemini File Search and Agent-powered knowledge w
 | Workspace Folder | Vault folder for generated logs, graph files, and workspace artifacts | `_omg` |
 | Agent Output Folder | Vault folder for Agent-created notes | `_omg/agent` |
 | Monthly Budget | Soft monthly Gemini API budget shown in the dashboard | `7` |
+| Wiki Enabled | Enable obsidian-wiki integration (adds Wiki tab) | Disabled |
+| Wiki CLI Path | Path to the `obsidian-wiki` command | `obsidian-wiki` |
+| Wiki Vault Path | Path to the wiki vault (empty = current vault) | Current vault |
+| Staged Writes | Send wiki ingests to `_staging/` for human review | Disabled |
+| Auto Lint | Run wiki lint after ingest/sync operations | Disabled |
 
 ## Important Notes
 

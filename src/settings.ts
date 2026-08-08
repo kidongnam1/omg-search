@@ -33,6 +33,12 @@ export interface GeminiSyncSettings {
 	files: Record<string, FileSyncData>;
 	// Apply to Note settings
 	includeMetadata: boolean;
+	// Wiki (obsidian-wiki) settings
+	wikiEnabled: boolean;
+	wikiCliPath: string;
+	wikiVaultPath: string;
+	wikiAutoLint: boolean;
+	wikiStagedWrites: boolean;
 }
 
 export const DEFAULT_SETTINGS: GeminiSyncSettings = {
@@ -58,7 +64,13 @@ export const DEFAULT_SETTINGS: GeminiSyncSettings = {
 	syncDebounceMs: 3000,
 	files: {},
 	// Apply to Note settings
-	includeMetadata: true
+	includeMetadata: true,
+	// Wiki (obsidian-wiki) settings
+	wikiEnabled: false,
+	wikiCliPath: 'obsidian-wiki',
+	wikiVaultPath: '',
+	wikiAutoLint: false,
+	wikiStagedWrites: false
 };
 
 export class GeminiSyncSettingTab extends PluginSettingTab {
@@ -495,6 +507,106 @@ export class GeminiSyncSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.includeMetadata = value;
 					await this.plugin.saveSettings();
+				})
+			);
+
+		// Wiki (obsidian-wiki) Section
+		containerEl.createEl('h2', { text: 'Wiki (obsidian-wiki)' });
+
+		containerEl.createEl('p', {
+			cls: 'setting-item-description',
+			text: 'Integrate obsidian-wiki to compile knowledge into interconnected pages with provenance, confidence, and typed relationships.'
+		});
+
+		new Setting(containerEl)
+			.setName('Enable Wiki Integration')
+			.setDesc('Adds a Wiki tab to the dashboard with query, lint, ingest, and status features.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.wikiEnabled)
+				.onChange(async (value) => {
+					this.plugin.settings.wikiEnabled = value;
+					await this.plugin.saveSettings();
+				})
+			);
+
+		new Setting(containerEl)
+			.setName('Wiki CLI Path')
+			.setDesc('Path to the obsidian-wiki command. Install with: pip install obsidian-wiki')
+			.addText(text => text
+				.setPlaceholder('obsidian-wiki')
+				.setValue(this.plugin.settings.wikiCliPath)
+				.onChange(async (value) => {
+					this.plugin.settings.wikiCliPath = value.trim() || 'obsidian-wiki';
+					await this.plugin.saveSettings();
+				})
+			)
+			.addButton(button => button
+				.setButtonText('Auto-detect')
+				.onClick(async () => {
+					const found = this.plugin.wikiService.resolveCliPath();
+					if (!found) {
+						new Notice('obsidian-wiki not found. Install with: pip install obsidian-wiki');
+						return;
+					}
+					this.plugin.settings.wikiCliPath = found;
+					await this.plugin.saveSettings();
+					new Notice(`Found: ${found}`);
+					this.display();
+				})
+			);
+
+		new Setting(containerEl)
+			.setName('Wiki Vault Path')
+			.setDesc('Path to the obsidian-wiki vault. Leave empty to use the current Obsidian vault.')
+			.addText(text => text
+				.setPlaceholder('(current vault)')
+				.setValue(this.plugin.settings.wikiVaultPath)
+				.onChange(async (value) => {
+					this.plugin.settings.wikiVaultPath = value.trim();
+					await this.plugin.saveSettings();
+				})
+			);
+
+		new Setting(containerEl)
+			.setName('Staged Writes')
+			.setDesc('When enabled, wiki ingests go to _staging/ for human review before merging into the vault.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.wikiStagedWrites)
+				.onChange(async (value) => {
+					this.plugin.settings.wikiStagedWrites = value;
+					await this.plugin.saveSettings();
+				})
+			);
+
+		new Setting(containerEl)
+			.setName('Auto Lint')
+			.setDesc('Automatically run wiki lint checks after ingest or sync operations.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.wikiAutoLint)
+				.onChange(async (value) => {
+					this.plugin.settings.wikiAutoLint = value;
+					await this.plugin.saveSettings();
+				})
+			);
+
+		new Setting(containerEl)
+			.setName('Initialize Wiki Vault')
+			.setDesc('Run obsidian-wiki setup to create the vault structure (index.md, categories, manifest).')
+			.addButton(button => button
+				.setButtonText('Setup Wiki')
+				.onClick(async () => {
+					button.setButtonText('Setting up...');
+					button.setDisabled(true);
+					try {
+						const result = await this.plugin.wikiService.runSetup();
+						new Notice(result.message);
+					} catch (error) {
+						new Notice('Wiki setup failed. Check console for details.');
+						console.error('Wiki setup error:', error);
+					} finally {
+						button.setButtonText('Setup Wiki');
+						button.setDisabled(false);
+					}
 				})
 			);
 

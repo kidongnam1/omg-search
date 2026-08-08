@@ -4,6 +4,7 @@ import { GeminiService } from './gemini-service';
 import { SyncEngine } from './sync-engine';
 import { ChatView, CHAT_VIEW_TYPE } from './chat-view';
 import { AgentService } from './agent-service';
+import { WikiService } from './wiki-service';
 
 export interface BudgetUsageEvent {
 	type: 'chat';
@@ -19,6 +20,7 @@ export default class GeminiSyncPlugin extends Plugin {
 	geminiService: GeminiService;
 	syncEngine: SyncEngine;
 	agentService: AgentService;
+	wikiService: WikiService;
 	statusBarItem: HTMLElement;
 
 	async onload() {
@@ -31,6 +33,7 @@ export default class GeminiSyncPlugin extends Plugin {
 		this.geminiService = new GeminiService(this);
 		this.syncEngine = new SyncEngine(this, this.geminiService);
 		this.agentService = new AgentService(this);
+		this.wikiService = new WikiService(this);
 		await this.ensureDefaultWorkspaceFolders();
 		await this.reconcileBudgetFromLog();
 
@@ -75,6 +78,29 @@ export default class GeminiSyncPlugin extends Plugin {
 					return;
 				}
 				await this.syncEngine.fullSync();
+			}
+		});
+
+		// Add command for wiki query
+		this.addCommand({
+			id: 'wiki-query',
+			name: 'Wiki Query',
+			callback: () => {
+				this.activateChatView('wiki');
+			}
+		});
+
+		// Add command for wiki lint
+		this.addCommand({
+			id: 'wiki-lint',
+			name: 'Wiki Lint',
+			callback: async () => {
+				if (!this.settings.wikiEnabled) {
+					new Notice('Enable Wiki integration in settings first');
+					return;
+				}
+				const result = await this.wikiService.runLint();
+				new Notice(result.ok ? `Wiki lint passed: ${result.summary}` : `Wiki lint: ${result.summary}`);
 			}
 		});
 
@@ -429,7 +455,7 @@ export default class GeminiSyncPlugin extends Plugin {
 		setting.openTabById?.(this.manifest.id);
 	}
 
-	async activateChatView() {
+	async activateChatView(tab?: string) {
 		const { workspace } = this.app;
 
 		let leaf: WorkspaceLeaf | null = null;
@@ -446,6 +472,12 @@ export default class GeminiSyncPlugin extends Plugin {
 
 		if (leaf) {
 			workspace.revealLeaf(leaf);
+			if (tab) {
+				const chatView = leaf.view as ChatView;
+				if (chatView && typeof chatView.switchTab === 'function') {
+					chatView.switchTab(tab);
+				}
+			}
 		}
 	}
 }

@@ -152,6 +152,7 @@ export class AgentService {
 		const scope = this.plugin.settings.syncFolders.join(', ') || 'No sync folders selected';
 		const webSearch = this.plugin.settings.agentWebSearchEnabled;
 		const obsidianSkill = await this.getObsidianSkillContext();
+		const wikiContext = await this.getWikiContext(prompt);
 		const syncedNotes = await this.buildSyncedNotesContext(prompt);
 		this.lastContextStats = syncedNotes.stats;
 		let activeNoteContent = '';
@@ -176,6 +177,7 @@ export class AgentService {
 			'All generated files must stay inside the current Obsidian vault. Treat the Agent output folder as a vault-relative path, not an external filesystem destination.',
 			'If you create a note file, save it inside the Agent output folder and include its vault-relative markdown link in the response. If you only draft text in chat, do not claim that a file was saved.',
 			obsidianSkill,
+			wikiContext,
 			`Selected knowledge folders: ${scope}.`,
 			activeFile ? `Active note path: ${activeFile.path}.` : 'No active note is open.',
 			activeNoteContent ? `Active note content excerpt:\n${activeNoteContent}` : '',
@@ -215,6 +217,25 @@ export class AgentService {
 				'Obsidian writing skill loaded. Follow it by default for note-writing tasks:',
 				`--- ${path} ---`,
 				content.length > 5000 ? `${content.slice(0, 5000)}\n...[skill truncated]` : content
+			].join('\n');
+		} catch {
+			return '';
+		}
+	}
+
+	private async getWikiContext(prompt: string): Promise<string> {
+		if (!this.plugin.settings.wikiEnabled) return '';
+
+		try {
+			const contextPack = await this.plugin.wikiService.runContextPack(prompt, 6000);
+			if (!contextPack) return '';
+
+			return [
+				'obsidian-wiki knowledge context (compiled wiki pages relevant to this request):',
+				'--- wiki context ---',
+				contextPack.length > 6000 ? `${contextPack.slice(0, 6000)}\n...[wiki context truncated]` : contextPack,
+				'--- end wiki context ---',
+				'Use wiki citations ([[Page Name]]) when referencing wiki knowledge.'
 			].join('\n');
 		} catch {
 			return '';

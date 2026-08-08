@@ -2,7 +2,7 @@ import { ItemView, WorkspaceLeaf, MarkdownRenderer, Notice, TFile, Modal, FuzzyS
 import GeminiSyncPlugin from './main';
 import { ChatMessage, Citation } from './gemini-service';
 
-type DashboardTab = 'chat' | 'agent' | 'budget' | 'workspace' | 'graph' | 'settings';
+type DashboardTab = 'chat' | 'agent' | 'wiki' | 'budget' | 'workspace' | 'graph' | 'settings';
 
 type KnowledgeGraphNode = {
 	id: string;
@@ -160,6 +160,7 @@ export class ChatView extends ItemView {
 		const tabs: Array<{ id: DashboardTab; label: string }> = [
 			{ id: 'chat', label: 'Chat' },
 			{ id: 'agent', label: 'Agent' },
+			...(this.plugin.settings.wikiEnabled ? [{ id: 'wiki' as DashboardTab, label: 'Wiki' }] : []),
 			{ id: 'budget', label: 'Budget' },
 			{ id: 'workspace', label: '_omg' },
 			{ id: 'graph', label: 'Graph' },
@@ -182,6 +183,11 @@ export class ChatView extends ItemView {
 	private renderActiveTab() {
 		this.dashboardContentEl.empty();
 		this.welcomeEl = null;
+
+		if (this.activeTab === 'wiki') {
+			this.renderWikiTab();
+			return;
+		}
 
 		if (this.activeTab === 'budget') {
 			this.renderBudgetTab();
@@ -295,6 +301,187 @@ export class ChatView extends ItemView {
 			newButton.setAttr('title', 'Stop the current run before starting a new conversation.');
 		}
 		newButton.addEventListener('click', () => this.startNewConversation());
+	}
+
+	switchTab(tab: string) {
+		if (['chat', 'agent', 'wiki', 'budget', 'workspace', 'graph', 'settings'].includes(tab)) {
+			this.activeTab = tab as DashboardTab;
+			this.renderTabs();
+			this.renderActiveTab();
+		}
+	}
+
+	private wikiQueryMessages: Array<{ role: 'user' | 'model'; content: string }> = [];
+	private wikiStatusCache: any = null;
+
+	private renderWikiTab() {
+		const panel = this.dashboardContentEl.createDiv({ cls: 'mok-panel mok-wiki-panel' });
+
+		// Status section
+		const statusSection = panel.createDiv({ cls: 'mok-wiki-status' });
+		statusSection.createEl('h3', { text: 'Wiki Status' });
+		const statusContent = statusSection.createDiv({ cls: 'mok-wiki-status-content' });
+		statusContent.createEl('p', { text: 'Checking wiki status...' });
+
+		this.plugin.wikiService.checkInstallation().then(status => {
+			statusContent.empty();
+			if (!status.installed) {
+				statusContent.createEl('p', { cls: 'mok-wiki-error', text: status.error || 'obsidian-wiki CLI not found' });
+				statusContent.createEl('p', { text: 'Install: pip install obsidian-wiki' });
+				return;
+			}
+
+			const grid = statusContent.createDiv({ cls: 'mok-wiki-status-grid' });
+			grid.createDiv({ text: `CLI: ${status.cliPath}` });
+			grid.createDiv({ text: `Vault: ${status.vaultPath || '(current)'}` });
+			grid.createDiv({ text: `Pages: ${status.pageCount}` });
+			grid.createDiv({ text: `Categories: ${status.categories.join(', ') || 'none'}` });
+			grid.createDiv({ text: `index.md: ${status.hasIndex ? 'yes' : 'no'}` });
+			grid.createDiv({ text: `.manifest.json: ${status.hasManifest ? 'yes' : 'no'}` });
+
+			if (!status.hasIndex && !status.hasManifest) {
+				const setupBtn = statusContent.createEl('button', {
+					cls: 'gemini-chat-action-btn',
+					text: 'Initialize Wiki Vault'
+				});
+				setupBtn.addEventListener('click', async () => {
+					setupBtn.setText('Setting up...');
+					setupBtn.setAttr('disabled', 'true');
+					const result = await this.plugin.wikiService.runSetup();
+					new Notice(result.message);
+					setupBtn.removeAttribute('disabled');
+					setupBtn.setText('Initialize Wiki Vault');
+					this.renderActiveTab();
+				});
+			}
+			this.wikiStatusCache = status;
+		});
+
+		// Lint section
+		const lintSection = panel.createDiv({ cls: 'mok-wiki-lint' });
+		lintSection.createEl('h3', { text: 'Health Check' });
+		const lintResultEl = lintSection.createDiv({ cls: 'mok-wiki-lint-results' });
+
+		const lintBtn = lintSection.createEl('button', {
+			cls: 'gemini-chat-action-btn',
+			text: 'Run Lint'
+		});
+		lintBtn.addEventListener('click', async () => {
+			lintBtn.setText('Checking...');
+			lintBtn.setAttr('disabled', 'true');
+			lintResultEl.empty();
+
+			const result = await this.plugin.wikiService.runLint();
+			lintResultEl.empty();
+
+			if (result.error) {
+				lintResultEl.createEl('p', { cls: 'mok-wiki-error', text: result.error });
+			} else {
+				lintResultEl.createEl('p', { text: result.summary });
+				const list = lintResultEl.createEl('ul', { cls: 'mok-wiki-lint-list' });
+				for (const check of result.checks) {
+					const icon = check.status === 'pass' ? '✓' : check.status === 'warn' ? '⚠' : '✗';
+					const cls = `mok-wiki-lint-${check.status}`;
+					const li = list.createEl('li', { cls, text: `${icon} ${check.message}` });
+					if (check.items && check.items.length > 0) {
+						const subList = li.createEl('ul');
+						for (const item of check.items.slice(0, 10)) {
+							subList.createEl('li', { text: item });
+						}
+						if (check.items.length > 10) {
+							subList.createEl('li', { text: `... +${check.items.length - 10} more` });
+						}
+					}
+				}
+			}
+
+			lintBtn.removeAttribute('disabled');
+			lintBtn.setText('Run Lint');
+		});
+
+		// Query section
+		const querySection = panel.createDiv({ cls: 'mok-wiki-query' });
+		querySection.createEl('h3', { text: 'Wiki Query' });
+		querySection.createEl('p', { cls: 'setting-item-description', text: 'Query your wiki with GraphRAG-backed tiered retrieval. Answers are grounded in wiki pages with [[wikilink]] citations.' });
+
+		const queryMessages = querySection.createDiv({ cls: 'mok-wiki-query-messages' });
+		for (const msg of this.wikiQueryMessages) {
+			const msgEl = queryMessages.createDiv({ cls: `mok-wiki-msg mok-wiki-msg-${msg.role}` });
+			msgEl.createEl('strong', { text: msg.role === 'user' ? 'You' : 'Wiki' });
+			const bodyEl = msgEl.createDiv({ cls: 'mok-wiki-msg-body' });
+			this.renderWikiMessageContent(bodyEl, msg.content);
+		}
+
+		const queryInput = querySection.createEl('textarea', {
+			cls: 'gemini-chat-input mok-wiki-query-input',
+			placeholder: 'Ask your wiki...'
+		});
+
+		queryInput.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter' && !e.shiftKey) {
+				e.preventDefault();
+				const query = queryInput.value.trim();
+				if (!query) return;
+				this.handleWikiQuery(query, queryInput, queryMessages);
+			}
+		});
+
+		const queryBtn = querySection.createEl('button', {
+			cls: 'gemini-chat-send-btn',
+			text: '➤'
+		});
+		queryBtn.addEventListener('click', () => {
+			const query = queryInput.value.trim();
+			if (!query) return;
+			this.handleWikiQuery(query, queryInput, queryMessages);
+		});
+	}
+
+	private renderWikiMessageContent(container: HTMLElement, content: string) {
+		const processed = content.replace(/\[\[([^\]]+)\]\]/g, (match, title) => {
+			return `[${title}](obsidian://open?vault=${encodeURIComponent(this.app.vault.getName())}&file=${encodeURIComponent(title)})`;
+		});
+		MarkdownRenderer.renderMarkdown(processed, container, '', this as any);
+	}
+
+	private async handleWikiQuery(query: string, inputEl: HTMLTextAreaElement, messagesEl: HTMLElement) {
+		this.wikiQueryMessages.push({ role: 'user', content: query });
+		inputEl.value = '';
+
+		const userMsgEl = messagesEl.createDiv({ cls: 'mok-wiki-msg mok-wiki-msg-user' });
+		userMsgEl.createEl('strong', { text: 'You' });
+		userMsgEl.createDiv({ cls: 'mok-wiki-msg-body', text: query });
+
+		const loadingEl = messagesEl.createDiv({ cls: 'mok-wiki-msg mok-wiki-msg-model' });
+		loadingEl.createEl('strong', { text: 'Wiki' });
+		loadingEl.createDiv({ cls: 'mok-wiki-msg-body', text: 'Searching...' });
+		messagesEl.scrollTop = messagesEl.scrollHeight;
+
+		const result = await this.plugin.wikiService.runQuery(query);
+
+		loadingEl.remove();
+
+		const answer = result.error || result.answer || 'No answer found.';
+		this.wikiQueryMessages.push({ role: 'model', content: answer });
+
+		const modelMsgEl = messagesEl.createDiv({ cls: 'mok-wiki-msg mok-wiki-msg-model' });
+		modelMsgEl.createEl('strong', { text: 'Wiki' });
+		const bodyEl = modelMsgEl.createDiv({ cls: 'mok-wiki-msg-body' });
+		this.renderWikiMessageContent(bodyEl, answer);
+
+		if (result.sources.length > 0) {
+			const sourcesEl = modelMsgEl.createDiv({ cls: 'mok-wiki-sources' });
+			sourcesEl.createEl('small', { text: 'Sources:' });
+			for (const src of result.sources) {
+				const srcLink = sourcesEl.createEl('a', { cls: 'mok-wiki-source-link', text: src });
+				srcLink.addEventListener('click', (e) => {
+					e.preventDefault();
+					this.app.workspace.openLinkText(src, '', false);
+				});
+			}
+		}
+
+		messagesEl.scrollTop = messagesEl.scrollHeight;
 	}
 
 	private renderBudgetTab() {

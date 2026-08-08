@@ -54,7 +54,13 @@ var DEFAULT_SETTINGS = {
   syncDebounceMs: 3e3,
   files: {},
   // Apply to Note settings
-  includeMetadata: true
+  includeMetadata: true,
+  // Wiki (obsidian-wiki) settings
+  wikiEnabled: false,
+  wikiCliPath: "obsidian-wiki",
+  wikiVaultPath: "",
+  wikiAutoLint: false,
+  wikiStagedWrites: false
 };
 var GeminiSyncSettingTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
@@ -349,6 +355,69 @@ var GeminiSyncSettingTab = class extends import_obsidian.PluginSettingTab {
       (toggle) => toggle.setValue(this.plugin.settings.includeMetadata).onChange(async (value) => {
         this.plugin.settings.includeMetadata = value;
         await this.plugin.saveSettings();
+      })
+    );
+    containerEl.createEl("h2", { text: "Wiki (obsidian-wiki)" });
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "Integrate obsidian-wiki to compile knowledge into interconnected pages with provenance, confidence, and typed relationships."
+    });
+    new import_obsidian.Setting(containerEl).setName("Enable Wiki Integration").setDesc("Adds a Wiki tab to the dashboard with query, lint, ingest, and status features.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.wikiEnabled).onChange(async (value) => {
+        this.plugin.settings.wikiEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Wiki CLI Path").setDesc("Path to the obsidian-wiki command. Install with: pip install obsidian-wiki").addText(
+      (text) => text.setPlaceholder("obsidian-wiki").setValue(this.plugin.settings.wikiCliPath).onChange(async (value) => {
+        this.plugin.settings.wikiCliPath = value.trim() || "obsidian-wiki";
+        await this.plugin.saveSettings();
+      })
+    ).addButton(
+      (button) => button.setButtonText("Auto-detect").onClick(async () => {
+        const found = this.plugin.wikiService.resolveCliPath();
+        if (!found) {
+          new import_obsidian.Notice("obsidian-wiki not found. Install with: pip install obsidian-wiki");
+          return;
+        }
+        this.plugin.settings.wikiCliPath = found;
+        await this.plugin.saveSettings();
+        new import_obsidian.Notice(`Found: ${found}`);
+        this.display();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Wiki Vault Path").setDesc("Path to the obsidian-wiki vault. Leave empty to use the current Obsidian vault.").addText(
+      (text) => text.setPlaceholder("(current vault)").setValue(this.plugin.settings.wikiVaultPath).onChange(async (value) => {
+        this.plugin.settings.wikiVaultPath = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Staged Writes").setDesc("When enabled, wiki ingests go to _staging/ for human review before merging into the vault.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.wikiStagedWrites).onChange(async (value) => {
+        this.plugin.settings.wikiStagedWrites = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Auto Lint").setDesc("Automatically run wiki lint checks after ingest or sync operations.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.wikiAutoLint).onChange(async (value) => {
+        this.plugin.settings.wikiAutoLint = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("Initialize Wiki Vault").setDesc("Run obsidian-wiki setup to create the vault structure (index.md, categories, manifest).").addButton(
+      (button) => button.setButtonText("Setup Wiki").onClick(async () => {
+        button.setButtonText("Setting up...");
+        button.setDisabled(true);
+        try {
+          const result = await this.plugin.wikiService.runSetup();
+          new import_obsidian.Notice(result.message);
+        } catch (error) {
+          new import_obsidian.Notice("Wiki setup failed. Check console for details.");
+          console.error("Wiki setup error:", error);
+        } finally {
+          button.setButtonText("Setup Wiki");
+          button.setDisabled(false);
+        }
       })
     );
     containerEl.createEl("h2", { text: "Help" });
@@ -3262,6 +3331,8 @@ var ChatView = class extends import_obsidian4.ItemView {
     this.welcomeEl = null;
     this.activeTab = "chat";
     this.citationPreviewEl = null;
+    this.wikiQueryMessages = [];
+    this.wikiStatusCache = null;
     this.plugin = plugin;
   }
   getViewType() {
@@ -3326,6 +3397,7 @@ var ChatView = class extends import_obsidian4.ItemView {
     const tabs = [
       { id: "chat", label: "Chat" },
       { id: "agent", label: "Agent" },
+      ...this.plugin.settings.wikiEnabled ? [{ id: "wiki", label: "Wiki" }] : [],
       { id: "budget", label: "Budget" },
       { id: "workspace", label: "_omg" },
       { id: "graph", label: "Graph" },
@@ -3346,6 +3418,10 @@ var ChatView = class extends import_obsidian4.ItemView {
   renderActiveTab() {
     this.dashboardContentEl.empty();
     this.welcomeEl = null;
+    if (this.activeTab === "wiki") {
+      this.renderWikiTab();
+      return;
+    }
     if (this.activeTab === "budget") {
       this.renderBudgetTab();
       return;
@@ -3441,6 +3517,157 @@ var ChatView = class extends import_obsidian4.ItemView {
       newButton.setAttr("title", "Stop the current run before starting a new conversation.");
     }
     newButton.addEventListener("click", () => this.startNewConversation());
+  }
+  switchTab(tab) {
+    if (["chat", "agent", "wiki", "budget", "workspace", "graph", "settings"].includes(tab)) {
+      this.activeTab = tab;
+      this.renderTabs();
+      this.renderActiveTab();
+    }
+  }
+  renderWikiTab() {
+    const panel = this.dashboardContentEl.createDiv({ cls: "mok-panel mok-wiki-panel" });
+    const statusSection = panel.createDiv({ cls: "mok-wiki-status" });
+    statusSection.createEl("h3", { text: "Wiki Status" });
+    const statusContent = statusSection.createDiv({ cls: "mok-wiki-status-content" });
+    statusContent.createEl("p", { text: "Checking wiki status..." });
+    this.plugin.wikiService.checkInstallation().then((status) => {
+      statusContent.empty();
+      if (!status.installed) {
+        statusContent.createEl("p", { cls: "mok-wiki-error", text: status.error || "obsidian-wiki CLI not found" });
+        statusContent.createEl("p", { text: "Install: pip install obsidian-wiki" });
+        return;
+      }
+      const grid = statusContent.createDiv({ cls: "mok-wiki-status-grid" });
+      grid.createDiv({ text: `CLI: ${status.cliPath}` });
+      grid.createDiv({ text: `Vault: ${status.vaultPath || "(current)"}` });
+      grid.createDiv({ text: `Pages: ${status.pageCount}` });
+      grid.createDiv({ text: `Categories: ${status.categories.join(", ") || "none"}` });
+      grid.createDiv({ text: `index.md: ${status.hasIndex ? "yes" : "no"}` });
+      grid.createDiv({ text: `.manifest.json: ${status.hasManifest ? "yes" : "no"}` });
+      if (!status.hasIndex && !status.hasManifest) {
+        const setupBtn = statusContent.createEl("button", {
+          cls: "gemini-chat-action-btn",
+          text: "Initialize Wiki Vault"
+        });
+        setupBtn.addEventListener("click", async () => {
+          setupBtn.setText("Setting up...");
+          setupBtn.setAttr("disabled", "true");
+          const result = await this.plugin.wikiService.runSetup();
+          new import_obsidian4.Notice(result.message);
+          setupBtn.removeAttribute("disabled");
+          setupBtn.setText("Initialize Wiki Vault");
+          this.renderActiveTab();
+        });
+      }
+      this.wikiStatusCache = status;
+    });
+    const lintSection = panel.createDiv({ cls: "mok-wiki-lint" });
+    lintSection.createEl("h3", { text: "Health Check" });
+    const lintResultEl = lintSection.createDiv({ cls: "mok-wiki-lint-results" });
+    const lintBtn = lintSection.createEl("button", {
+      cls: "gemini-chat-action-btn",
+      text: "Run Lint"
+    });
+    lintBtn.addEventListener("click", async () => {
+      lintBtn.setText("Checking...");
+      lintBtn.setAttr("disabled", "true");
+      lintResultEl.empty();
+      const result = await this.plugin.wikiService.runLint();
+      lintResultEl.empty();
+      if (result.error) {
+        lintResultEl.createEl("p", { cls: "mok-wiki-error", text: result.error });
+      } else {
+        lintResultEl.createEl("p", { text: result.summary });
+        const list = lintResultEl.createEl("ul", { cls: "mok-wiki-lint-list" });
+        for (const check of result.checks) {
+          const icon = check.status === "pass" ? "\u2713" : check.status === "warn" ? "\u26A0" : "\u2717";
+          const cls = `mok-wiki-lint-${check.status}`;
+          const li = list.createEl("li", { cls, text: `${icon} ${check.message}` });
+          if (check.items && check.items.length > 0) {
+            const subList = li.createEl("ul");
+            for (const item of check.items.slice(0, 10)) {
+              subList.createEl("li", { text: item });
+            }
+            if (check.items.length > 10) {
+              subList.createEl("li", { text: `... +${check.items.length - 10} more` });
+            }
+          }
+        }
+      }
+      lintBtn.removeAttribute("disabled");
+      lintBtn.setText("Run Lint");
+    });
+    const querySection = panel.createDiv({ cls: "mok-wiki-query" });
+    querySection.createEl("h3", { text: "Wiki Query" });
+    querySection.createEl("p", { cls: "setting-item-description", text: "Query your wiki with GraphRAG-backed tiered retrieval. Answers are grounded in wiki pages with [[wikilink]] citations." });
+    const queryMessages = querySection.createDiv({ cls: "mok-wiki-query-messages" });
+    for (const msg of this.wikiQueryMessages) {
+      const msgEl = queryMessages.createDiv({ cls: `mok-wiki-msg mok-wiki-msg-${msg.role}` });
+      msgEl.createEl("strong", { text: msg.role === "user" ? "You" : "Wiki" });
+      const bodyEl = msgEl.createDiv({ cls: "mok-wiki-msg-body" });
+      this.renderWikiMessageContent(bodyEl, msg.content);
+    }
+    const queryInput = querySection.createEl("textarea", {
+      cls: "gemini-chat-input mok-wiki-query-input",
+      placeholder: "Ask your wiki..."
+    });
+    queryInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        const query = queryInput.value.trim();
+        if (!query)
+          return;
+        this.handleWikiQuery(query, queryInput, queryMessages);
+      }
+    });
+    const queryBtn = querySection.createEl("button", {
+      cls: "gemini-chat-send-btn",
+      text: "\u27A4"
+    });
+    queryBtn.addEventListener("click", () => {
+      const query = queryInput.value.trim();
+      if (!query)
+        return;
+      this.handleWikiQuery(query, queryInput, queryMessages);
+    });
+  }
+  renderWikiMessageContent(container, content) {
+    const processed = content.replace(/\[\[([^\]]+)\]\]/g, (match, title) => {
+      return `[${title}](obsidian://open?vault=${encodeURIComponent(this.app.vault.getName())}&file=${encodeURIComponent(title)})`;
+    });
+    import_obsidian4.MarkdownRenderer.renderMarkdown(processed, container, "", this);
+  }
+  async handleWikiQuery(query, inputEl, messagesEl) {
+    this.wikiQueryMessages.push({ role: "user", content: query });
+    inputEl.value = "";
+    const userMsgEl = messagesEl.createDiv({ cls: "mok-wiki-msg mok-wiki-msg-user" });
+    userMsgEl.createEl("strong", { text: "You" });
+    userMsgEl.createDiv({ cls: "mok-wiki-msg-body", text: query });
+    const loadingEl = messagesEl.createDiv({ cls: "mok-wiki-msg mok-wiki-msg-model" });
+    loadingEl.createEl("strong", { text: "Wiki" });
+    loadingEl.createDiv({ cls: "mok-wiki-msg-body", text: "Searching..." });
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    const result = await this.plugin.wikiService.runQuery(query);
+    loadingEl.remove();
+    const answer = result.error || result.answer || "No answer found.";
+    this.wikiQueryMessages.push({ role: "model", content: answer });
+    const modelMsgEl = messagesEl.createDiv({ cls: "mok-wiki-msg mok-wiki-msg-model" });
+    modelMsgEl.createEl("strong", { text: "Wiki" });
+    const bodyEl = modelMsgEl.createDiv({ cls: "mok-wiki-msg-body" });
+    this.renderWikiMessageContent(bodyEl, answer);
+    if (result.sources.length > 0) {
+      const sourcesEl = modelMsgEl.createDiv({ cls: "mok-wiki-sources" });
+      sourcesEl.createEl("small", { text: "Sources:" });
+      for (const src of result.sources) {
+        const srcLink = sourcesEl.createEl("a", { cls: "mok-wiki-source-link", text: src });
+        srcLink.addEventListener("click", (e) => {
+          e.preventDefault();
+          this.app.workspace.openLinkText(src, "", false);
+        });
+      }
+    }
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   }
   renderBudgetTab() {
     const panel = this.dashboardContentEl.createDiv({ cls: "mok-panel" });
@@ -5349,6 +5576,7 @@ ${message}`,
     const scope = this.plugin.settings.syncFolders.join(", ") || "No sync folders selected";
     const webSearch = this.plugin.settings.agentWebSearchEnabled;
     const obsidianSkill = await this.getObsidianSkillContext();
+    const wikiContext = await this.getWikiContext(prompt);
     const syncedNotes = await this.buildSyncedNotesContext(prompt);
     this.lastContextStats = syncedNotes.stats;
     let activeNoteContent = "";
@@ -5371,6 +5599,7 @@ ${message}`,
       "All generated files must stay inside the current Obsidian vault. Treat the Agent output folder as a vault-relative path, not an external filesystem destination.",
       "If you create a note file, save it inside the Agent output folder and include its vault-relative markdown link in the response. If you only draft text in chat, do not claim that a file was saved.",
       obsidianSkill,
+      wikiContext,
       `Selected knowledge folders: ${scope}.`,
       activeFile ? `Active note path: ${activeFile.path}.` : "No active note is open.",
       activeNoteContent ? `Active note content excerpt:
@@ -5410,6 +5639,25 @@ ${activeNoteContent}` : "",
         `--- ${path} ---`,
         content.length > 5e3 ? `${content.slice(0, 5e3)}
 ...[skill truncated]` : content
+      ].join("\n");
+    } catch (e) {
+      return "";
+    }
+  }
+  async getWikiContext(prompt) {
+    if (!this.plugin.settings.wikiEnabled)
+      return "";
+    try {
+      const contextPack = await this.plugin.wikiService.runContextPack(prompt, 6e3);
+      if (!contextPack)
+        return "";
+      return [
+        "obsidian-wiki knowledge context (compiled wiki pages relevant to this request):",
+        "--- wiki context ---",
+        contextPack.length > 6e3 ? `${contextPack.slice(0, 6e3)}
+...[wiki context truncated]` : contextPack,
+        "--- end wiki context ---",
+        "Use wiki citations ([[Page Name]]) when referencing wiki knowledge."
       ].join("\n");
     } catch (e) {
       return "";
@@ -5789,6 +6037,288 @@ ${content.slice(0, 4e3)}`.toLowerCase();
   }
 };
 
+// src/wiki-service.ts
+var import_child_process2 = require("child_process");
+var import_fs2 = require("fs");
+var import_os2 = require("os");
+var import_path2 = require("path");
+var WikiService = class {
+  constructor(plugin) {
+    this.plugin = plugin;
+    this.activeChild = null;
+  }
+  stop() {
+    if (!this.activeChild)
+      return false;
+    this.activeChild.kill();
+    this.activeChild = null;
+    return true;
+  }
+  resolveCliPath() {
+    var _a;
+    const configured = (_a = this.plugin.settings.wikiCliPath) == null ? void 0 : _a.trim();
+    if (configured && configured !== "obsidian-wiki") {
+      if ((0, import_fs2.existsSync)(configured))
+        return configured;
+    }
+    const candidates = [
+      "obsidian-wiki",
+      (0, import_path2.join)((0, import_os2.homedir)(), ".local", "bin", "obsidian-wiki"),
+      (0, import_path2.join)((0, import_os2.homedir)(), ".cargo", "bin", "obsidian-wiki"),
+      "/usr/local/bin/obsidian-wiki",
+      "/opt/homebrew/bin/obsidian-wiki"
+    ];
+    if (process.platform === "win32") {
+      const localAppData = process.env.LOCALAPPDATA || (0, import_path2.join)((0, import_os2.homedir)(), "AppData", "Local");
+      candidates.push(
+        (0, import_path2.join)(localAppData, "Programs", "Python", "Scripts", "obsidian-wiki.exe"),
+        (0, import_path2.join)((0, import_os2.homedir)(), "AppData", "Roaming", "Python", "Scripts", "obsidian-wiki.exe")
+      );
+    }
+    const pathDirs = (process.env.PATH || "").split(import_path2.delimiter);
+    const exe = process.platform === "win32" ? "obsidian-wiki.exe" : "obsidian-wiki";
+    for (const dir of pathDirs) {
+      const full = (0, import_path2.join)(dir, exe);
+      if ((0, import_fs2.existsSync)(full))
+        return full;
+    }
+    for (const c of candidates) {
+      if ((0, import_fs2.existsSync)(c))
+        return c;
+    }
+    return null;
+  }
+  async checkInstallation() {
+    const cliPath = this.resolveCliPath();
+    const vaultPath = this.getWikiVaultPath();
+    const result = {
+      installed: false,
+      vaultConfigured: !!vaultPath,
+      vaultPath: vaultPath || "",
+      cliPath: cliPath || "",
+      pageCount: 0,
+      categories: [],
+      hasManifest: false,
+      hasIndex: false
+    };
+    if (!cliPath) {
+      result.error = "obsidian-wiki CLI not found. Install with: pip install obsidian-wiki";
+      return result;
+    }
+    result.installed = true;
+    try {
+      const output = await this.exec(cliPath, ["doctor"], 1e4);
+      if (output.exitCode === 0) {
+        result.installed = true;
+      }
+    } catch (e) {
+      result.error = "obsidian-wiki doctor check failed";
+    }
+    if (vaultPath) {
+      const vault = this.plugin.app.vault;
+      result.hasManifest = !!vault.getAbstractFileByPath(".manifest.json");
+      result.hasIndex = !!vault.getAbstractFileByPath("index.md");
+      const categories = ["concepts", "entities", "skills", "references", "synthesis", "journal", "projects"];
+      result.categories = categories.filter((c) => !!vault.getAbstractFileByPath(c));
+      let count = 0;
+      for (const cat of result.categories) {
+        const folder = vault.getAbstractFileByPath(cat);
+        if (folder && "children" in folder) {
+          count += folder.children.filter((f) => f.extension === "md").length;
+        }
+      }
+      result.pageCount = count;
+    }
+    return result;
+  }
+  async runQuery(query) {
+    const cliPath = this.resolveCliPath();
+    if (!cliPath) {
+      return { answer: "", sources: [], error: "obsidian-wiki CLI not found" };
+    }
+    const vaultPath = this.getWikiVaultPath();
+    if (!vaultPath) {
+      return { answer: "", sources: [], error: "Wiki vault path not configured" };
+    }
+    try {
+      const output = await this.exec(cliPath, ["query", query], 3e4, { OBSIDIAN_VAULT_PATH: vaultPath });
+      const sources = [];
+      const lines = output.stdout.split("\n");
+      for (const line of lines) {
+        const match = line.match(/\[\[([^\]]+)\]\]/g);
+        if (match) {
+          sources.push(...match.map((m) => m.replace(/^\[\[|\]\]$/g, "")));
+        }
+      }
+      return {
+        answer: output.stdout.trim(),
+        sources: [...new Set(sources)],
+        error: output.exitCode !== 0 ? output.stderr.trim() : void 0
+      };
+    } catch (error) {
+      return { answer: "", sources: [], error: (error == null ? void 0 : error.message) || "Query failed" };
+    }
+  }
+  async runLint() {
+    const cliPath = this.resolveCliPath();
+    if (!cliPath) {
+      return { ok: false, checks: [], summary: "", error: "obsidian-wiki CLI not found" };
+    }
+    const vaultPath = this.getWikiVaultPath();
+    if (!vaultPath) {
+      return { ok: false, checks: [], summary: "", error: "Wiki vault path not configured" };
+    }
+    try {
+      const output = await this.exec(cliPath, ["lint"], 3e4, { OBSIDIAN_VAULT_PATH: vaultPath });
+      const checks = [];
+      let currentCheck = null;
+      for (const line of output.stdout.split("\n")) {
+        const passMatch = line.match(/^\s*(PASS|OK|✓)\s+(.+)/i);
+        const failMatch = line.match(/^\s*(FAIL|ERROR|✗|✘)\s+(.+)/i);
+        const warnMatch = line.match(/^\s*(WARN|WARNING|⚠)\s+(.+)/i);
+        if (passMatch) {
+          currentCheck = { name: passMatch[2].trim(), status: "pass", message: passMatch[2].trim() };
+          checks.push(currentCheck);
+        } else if (failMatch) {
+          currentCheck = { name: failMatch[2].trim(), status: "fail", message: failMatch[2].trim(), items: [] };
+          checks.push(currentCheck);
+        } else if (warnMatch) {
+          currentCheck = { name: warnMatch[2].trim(), status: "warn", message: warnMatch[2].trim(), items: [] };
+          checks.push(currentCheck);
+        } else if (currentCheck && currentCheck.items && line.trim().startsWith("-")) {
+          currentCheck.items.push(line.trim().slice(1).trim());
+        }
+      }
+      const failCount = checks.filter((c) => c.status === "fail").length;
+      const warnCount = checks.filter((c) => c.status === "warn").length;
+      const passCount = checks.filter((c) => c.status === "pass").length;
+      return {
+        ok: failCount === 0,
+        checks,
+        summary: `${passCount} passed, ${warnCount} warnings, ${failCount} failed`,
+        error: output.exitCode !== 0 ? output.stderr.trim() : void 0
+      };
+    } catch (error) {
+      return { ok: false, checks: [], summary: "", error: (error == null ? void 0 : error.message) || "Lint failed" };
+    }
+  }
+  async runIngest(sourcePath) {
+    const cliPath = this.resolveCliPath();
+    if (!cliPath) {
+      return { ok: false, pagesCreated: 0, pagesUpdated: 0, message: "", error: "obsidian-wiki CLI not found" };
+    }
+    const vaultPath = this.getWikiVaultPath();
+    if (!vaultPath) {
+      return { ok: false, pagesCreated: 0, pagesUpdated: 0, message: "", error: "Wiki vault path not configured" };
+    }
+    try {
+      const output = await this.exec(cliPath, ["cache-check", sourcePath], 6e4, { OBSIDIAN_VAULT_PATH: vaultPath });
+      let created = 0;
+      let updated = 0;
+      for (const line of output.stdout.split("\n")) {
+        const createMatch = line.match(/created?\s*:?\s*(\d+)/i);
+        const updateMatch = line.match(/updated?\s*:?\s*(\d+)/i);
+        if (createMatch)
+          created = parseInt(createMatch[1]);
+        if (updateMatch)
+          updated = parseInt(updateMatch[1]);
+      }
+      return {
+        ok: output.exitCode === 0,
+        pagesCreated: created,
+        pagesUpdated: updated,
+        message: output.stdout.trim(),
+        error: output.exitCode !== 0 ? output.stderr.trim() : void 0
+      };
+    } catch (error) {
+      return { ok: false, pagesCreated: 0, pagesUpdated: 0, message: "", error: (error == null ? void 0 : error.message) || "Ingest failed" };
+    }
+  }
+  async runSetup() {
+    const cliPath = this.resolveCliPath();
+    if (!cliPath) {
+      return { ok: false, message: "obsidian-wiki CLI not found. Install with: pip install obsidian-wiki" };
+    }
+    const vaultPath = this.getWikiVaultPath();
+    if (!vaultPath) {
+      return { ok: false, message: "Wiki vault path not configured. Set it in settings." };
+    }
+    try {
+      const output = await this.exec(cliPath, ["setup", "--vault", vaultPath], 3e4);
+      return {
+        ok: output.exitCode === 0,
+        message: output.exitCode === 0 ? "Wiki vault initialized successfully." : output.stderr.trim() || "Setup failed."
+      };
+    } catch (error) {
+      return { ok: false, message: (error == null ? void 0 : error.message) || "Setup failed" };
+    }
+  }
+  async runContextPack(topic, budget = 8e3) {
+    const cliPath = this.resolveCliPath();
+    if (!cliPath)
+      return "";
+    const vaultPath = this.getWikiVaultPath();
+    if (!vaultPath)
+      return "";
+    try {
+      const output = await this.exec(
+        cliPath,
+        ["context-pack", "--budget", String(budget), "--json", topic],
+        15e3,
+        { OBSIDIAN_VAULT_PATH: vaultPath }
+      );
+      return output.stdout.trim();
+    } catch (e) {
+      return "";
+    }
+  }
+  async listSkills() {
+    const cliPath = this.resolveCliPath();
+    if (!cliPath)
+      return [];
+    try {
+      const output = await this.exec(cliPath, ["list"], 1e4);
+      return output.stdout.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#") && !l.startsWith("-"));
+    } catch (e) {
+      return [];
+    }
+  }
+  getWikiVaultPath() {
+    if (this.plugin.settings.wikiVaultPath) {
+      return this.plugin.settings.wikiVaultPath;
+    }
+    return this.plugin.getVaultPath();
+  }
+  async exec(command, args, timeout = 3e4, extraEnv) {
+    return new Promise((resolve, reject) => {
+      const env = { ...process.env, ...extraEnv };
+      const child = (0, import_child_process2.spawn)(command, args, {
+        env,
+        cwd: this.getWikiVaultPath() || void 0,
+        timeout,
+        windowsHide: true
+      });
+      this.activeChild = child;
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+      child.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+      child.on("close", (code) => {
+        this.activeChild = null;
+        resolve({ stdout, stderr, exitCode: code != null ? code : 1 });
+      });
+      child.on("error", (err) => {
+        this.activeChild = null;
+        reject(err);
+      });
+    });
+  }
+};
+
 // src/main.ts
 var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
   async onload() {
@@ -5797,6 +6327,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
     this.geminiService = new GeminiService(this);
     this.syncEngine = new SyncEngine(this, this.geminiService);
     this.agentService = new AgentService(this);
+    this.wikiService = new WikiService(this);
     await this.ensureDefaultWorkspaceFolders();
     await this.reconcileBudgetFromLog();
     this.registerView(
@@ -5826,6 +6357,25 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
           return;
         }
         await this.syncEngine.fullSync();
+      }
+    });
+    this.addCommand({
+      id: "wiki-query",
+      name: "Wiki Query",
+      callback: () => {
+        this.activateChatView("wiki");
+      }
+    });
+    this.addCommand({
+      id: "wiki-lint",
+      name: "Wiki Lint",
+      callback: async () => {
+        if (!this.settings.wikiEnabled) {
+          new import_obsidian6.Notice("Enable Wiki integration in settings first");
+          return;
+        }
+        const result = await this.wikiService.runLint();
+        new import_obsidian6.Notice(result.ok ? `Wiki lint passed: ${result.summary}` : `Wiki lint: ${result.summary}`);
       }
     });
     if (this.settings.apiKey && this.settings.syncFolders.length > 0) {
@@ -6125,7 +6675,7 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
     setting.open();
     (_a = setting.openTabById) == null ? void 0 : _a.call(setting, this.manifest.id);
   }
-  async activateChatView() {
+  async activateChatView(tab) {
     const { workspace } = this.app;
     let leaf = null;
     const leaves = workspace.getLeavesOfType(CHAT_VIEW_TYPE);
@@ -6139,6 +6689,12 @@ var GeminiSyncPlugin = class extends import_obsidian6.Plugin {
     }
     if (leaf) {
       workspace.revealLeaf(leaf);
+      if (tab) {
+        const chatView = leaf.view;
+        if (chatView && typeof chatView.switchTab === "function") {
+          chatView.switchTab(tab);
+        }
+      }
     }
   }
 };

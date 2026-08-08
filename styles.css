@@ -1172,3 +1172,142 @@
 		min-width: 180px;
 	}
 }
+
+/* ==================== Wiki Tab ==================== */
+.mok-wiki-panel {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	padding: 12px;
+	overflow-y: auto;
+	height: 100%;
+}
+
+.mok-wiki-panel h3 {
+	margin: 0 0 8px 0;
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--text-normal);
+	border-bottom: 1px solid var(--background-modifier-border);
+	padding-bottom: 6px;
+}
+
+.mok-wiki-status-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 4px 12px;
+	font-size: 12px;
+	color: var(--text-muted);
+	padding: 6px 0;
+}
+
+.mok-wiki-error {
+	color: var(--text-error);
+	font-size: 12px;
+}
+
+.mok-wiki-lint-list {
+	list-style: none;
+	padding: 0;
+	margin: 8px 0;
+	font-size: 12px;
+}
+
+.mok-wiki-lint-list li {
+	padding: 3px 0;
+}
+
+.mok-wiki-lint-pass {
+	color: var(--text-success, var(--interactive-success));
+}
+
+.mok-wiki-lint-warn {
+	color: var(--text-warning, var(--color-yellow));
+}
+
+.mok-wiki-lint-fail {
+	color: var(--text-error);
+}
+
+.mok-wiki-lint-list ul {
+	padding-left: 16px;
+	margin: 2px 0;
+	color: var(--text-muted);
+}
+
+.mok-wiki-query-messages {
+	max-height: 400px;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.mok-wiki-msg {
+	padding: 8px 10px;
+	border-radius: 8px;
+	font-size: 13px;
+}
+
+.mok-wiki-msg strong {
+	display: block;
+	font-size: 11px;
+	color: var(--text-muted);
+	margin-bottom: 4px;
+}
+
+.mok-wiki-msg-user {
+	background: var(--background-secondary);
+	align-self: flex-end;
+	max-width: 85%;
+}
+
+.mok-wiki-msg-model {
+	background: var(--background-primary-alt);
+	align-self: flex-start;
+	max-width: 95%;
+}
+
+.mok-wiki-msg-body {
+	line-height: 1.5;
+}
+
+.mok-wiki-msg-body p {
+	margin: 4px 0;
+}
+
+.mok-wiki-sources {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	align-items: center;
+	margin-top: 6px;
+	padding-top: 6px;
+	border-top: 1px solid var(--background-modifier-border);
+}
+
+.mok-wiki-sources small {
+	color: var(--text-muted);
+	font-size: 11px;
+	margin-right: 4px;
+}
+
+.mok-wiki-source-link {
+	font-size: 11px;
+	padding: 2px 6px;
+	border-radius: 4px;
+	background: var(--background-secondary);
+	color: var(--text-accent);
+	cursor: pointer;
+	text-decoration: none;
+}
+
+.mok-wiki-source-link:hover {
+	background: var(--background-modifier-hover);
+}
+
+.mok-wiki-query-input {
+	min-height: 40px;
+	max-height: 80px;
+}
