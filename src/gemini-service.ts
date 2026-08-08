@@ -1041,7 +1041,7 @@ export class GeminiService {
 
 	// ==================== Chat / RAG ====================
 
-	async chat(userMessage: string): Promise<ChatMessage> {
+	async chat(userMessage: string, recordKindFilter?: string): Promise<ChatMessage> {
 		this.ensureCurrentModel();
 		const logPath = await this.createChatLog(userMessage);
 
@@ -1058,7 +1058,7 @@ export class GeminiService {
 		}
 
 		try {
-			const fileSearchResponse = await this.chatWithFileSearch(userMessage, logPath);
+			const fileSearchResponse = await this.chatWithFileSearch(userMessage, logPath, recordKindFilter);
 			if (fileSearchResponse) {
 				return fileSearchResponse;
 			}
@@ -1082,14 +1082,17 @@ export class GeminiService {
 			});
 
 			// Build context from synced files
-			const context = await this.buildContext();
+			const context = await this.buildContext(recordKindFilter);
 
 			// Create system prompt with context
+			const filterNote = recordKindFilter
+				? `\nNote: The user has filtered notes by record_kind="${recordKindFilter}". Only notes matching this kind are included in context. Mention this filter in your answer when relevant.`
+				: '';
 			const systemPrompt = `You are a helpful assistant that answers questions based on the user's personal notes from their Obsidian vault.
 
 Here are the relevant notes for context:
 
-${context}
+${context}${filterNote}
 
 Instructions:
 1. Answer questions based primarily on the provided notes.
@@ -1183,7 +1186,7 @@ Instructions:
 		}
 	}
 
-	private async chatWithFileSearch(userMessage: string, logPath: string): Promise<ChatMessage | null> {
+	private async chatWithFileSearch(userMessage: string, logPath: string, recordKindFilter?: string): Promise<ChatMessage | null> {
 		const corpusName = this.plugin.settings.corpusName || await this.getOrCreateCorpus();
 		if (!corpusName) {
 			await this.appendChatLog(logPath, {
@@ -1193,7 +1196,7 @@ Instructions:
 			return null;
 		}
 
-		const input = this.buildFileSearchPrompt(userMessage);
+		const input = this.buildFileSearchPrompt(userMessage, recordKindFilter);
 		await this.appendChatLog(logPath, {
 			event: 'file_search_start',
 			corpusName,
@@ -1328,8 +1331,8 @@ Instructions:
 		}).length;
 	}
 
-	private buildFileSearchPrompt(userMessage: string): string {
-		return [
+	private buildFileSearchPrompt(userMessage: string, recordKindFilter?: string): string {
+		const lines = [
 			'You are Master of Knowledge, an Obsidian knowledge assistant.',
 			'Use the File Search tool as the primary source of truth for the user\'s synced Obsidian notes.',
 			'Answer in the same language as the user\'s latest message. If the user writes Korean, answer naturally in Korean.',
@@ -1339,10 +1342,13 @@ Instructions:
 			'When the File Search result does not support the answer, say that clearly instead of guessing.',
 			'Produce a complete, practical artifact rather than a thin outline. For lesson plans, include audience, goals, time plan, activity flow, teacher script, hands-on tasks, materials, and follow-up prompts.',
 			'Ground recommendations in the retrieved notes, then add clearly labeled general suggestions only when useful.',
-			'',
-			'User request:',
-			userMessage
-		].join('\n');
+			'Notes may contain YAML frontmatter with record_kind (event, thought, idea, decision, question) and source_capture_id fields. When a note has source_capture_id, mention it as a provenance reference.',
+		];
+		if (recordKindFilter) {
+			lines.push(`The user has filtered by record_kind="${recordKindFilter}". Prioritize notes whose frontmatter contains record_kind: ${recordKindFilter}. Mention this filter context in your answer.`);
+		}
+		lines.push('', 'User request:', userMessage);
+		return lines.join('\n');
 	}
 
 	private extractInteractionOutput(data: any): { text: string; citations: Citation[] } {
@@ -1610,7 +1616,15 @@ Instructions:
 		return `Gemini 요청 실패. 현재 모델: \`${model}\`.\n\n${message}`;
 	}
 
-	private async buildContext(): Promise<string> {
+	private parseFrontmatterField(content: string, field: string): string | null {
+		const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+		if (!fmMatch) return null;
+		const pattern = new RegExp(`^${field}:\\s*(.+)`, 'm');
+		const match = fmMatch[1].match(pattern);
+		return match ? match[1].trim() : null;
+	}
+
+	private async buildContext(recordKindFilter?: string): Promise<string> {
 		const files = this.plugin.settings.files;
 		const contexts: string[] = [];
 
@@ -1620,6 +1634,12 @@ Instructions:
 					const file = this.plugin.app.vault.getAbstractFileByPath(path);
 					if (file && file instanceof TFile && file.extension === 'md') {
 						const content = await this.plugin.app.vault.read(file);
+
+						if (recordKindFilter) {
+							const kind = this.parseFrontmatterField(content, 'record_kind');
+							if (kind !== recordKindFilter) continue;
+						}
+
 						// Truncate if too long
 						const truncated = content.length > 2000
 							? content.substring(0, 2000) + '...[truncated]'
@@ -1638,7 +1658,9 @@ Instructions:
 			totalContext = totalContext.substring(0, 30000) + '\n...[context truncated due to length]';
 		}
 
-		return totalContext || 'No synced notes available.';
+		return totalContext || (recordKindFilter
+			? `No synced notes with record_kind="${recordKindFilter}" found.`
+			: 'No synced notes available.');
 	}
 
 	private extractCitations(text: string): Citation[] {

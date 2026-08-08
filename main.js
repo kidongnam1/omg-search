@@ -2349,7 +2349,7 @@ var GeminiService = class {
     }
   }
   // ==================== Chat / RAG ====================
-  async chat(userMessage) {
+  async chat(userMessage, recordKindFilter) {
     this.ensureCurrentModel();
     const logPath = await this.createChatLog(userMessage);
     if (!this.plugin.settings.apiKey) {
@@ -2364,7 +2364,7 @@ var GeminiService = class {
       };
     }
     try {
-      const fileSearchResponse = await this.chatWithFileSearch(userMessage, logPath);
+      const fileSearchResponse = await this.chatWithFileSearch(userMessage, logPath, recordKindFilter);
       if (fileSearchResponse) {
         return fileSearchResponse;
       }
@@ -2384,12 +2384,14 @@ var GeminiService = class {
         reason: "file_search_unavailable",
         syncedFileCount: this.getSyncedFileCount()
       });
-      const context = await this.buildContext();
+      const context = await this.buildContext(recordKindFilter);
+      const filterNote = recordKindFilter ? `
+Note: The user has filtered notes by record_kind="${recordKindFilter}". Only notes matching this kind are included in context. Mention this filter in your answer when relevant.` : "";
       const systemPrompt = `You are a helpful assistant that answers questions based on the user's personal notes from their Obsidian vault.
 
 Here are the relevant notes for context:
 
-${context}
+${context}${filterNote}
 
 Instructions:
 1. Answer questions based primarily on the provided notes.
@@ -2474,7 +2476,7 @@ ${userMessage}`))
       };
     }
   }
-  async chatWithFileSearch(userMessage, logPath) {
+  async chatWithFileSearch(userMessage, logPath, recordKindFilter) {
     var _a, _b;
     const corpusName = this.plugin.settings.corpusName || await this.getOrCreateCorpus();
     if (!corpusName) {
@@ -2484,7 +2486,7 @@ ${userMessage}`))
       });
       return null;
     }
-    const input = this.buildFileSearchPrompt(userMessage);
+    const input = this.buildFileSearchPrompt(userMessage, recordKindFilter);
     await this.appendChatLog(logPath, {
       event: "file_search_start",
       corpusName,
@@ -2611,8 +2613,8 @@ ${userMessage}`))
       return (syncData == null ? void 0 : syncData.status) === "synced" && this.plugin.isInSyncFolder(path);
     }).length;
   }
-  buildFileSearchPrompt(userMessage) {
-    return [
+  buildFileSearchPrompt(userMessage, recordKindFilter) {
+    const lines = [
       "You are Master of Knowledge, an Obsidian knowledge assistant.",
       "Use the File Search tool as the primary source of truth for the user's synced Obsidian notes.",
       "Answer in the same language as the user's latest message. If the user writes Korean, answer naturally in Korean.",
@@ -2622,10 +2624,13 @@ ${userMessage}`))
       "When the File Search result does not support the answer, say that clearly instead of guessing.",
       "Produce a complete, practical artifact rather than a thin outline. For lesson plans, include audience, goals, time plan, activity flow, teacher script, hands-on tasks, materials, and follow-up prompts.",
       "Ground recommendations in the retrieved notes, then add clearly labeled general suggestions only when useful.",
-      "",
-      "User request:",
-      userMessage
-    ].join("\n");
+      "Notes may contain YAML frontmatter with record_kind (event, thought, idea, decision, question) and source_capture_id fields. When a note has source_capture_id, mention it as a provenance reference."
+    ];
+    if (recordKindFilter) {
+      lines.push(`The user has filtered by record_kind="${recordKindFilter}". Prioritize notes whose frontmatter contains record_kind: ${recordKindFilter}. Mention this filter context in your answer.`);
+    }
+    lines.push("", "User request:", userMessage);
+    return lines.join("\n");
   }
   extractInteractionOutput(data) {
     const texts = [];
@@ -2893,7 +2898,15 @@ ${content.slice(0, 5e3)}`.toLowerCase();
 
 ${message}`;
   }
-  async buildContext() {
+  parseFrontmatterField(content, field) {
+    const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+    if (!fmMatch)
+      return null;
+    const pattern = new RegExp(`^${field}:\\s*(.+)`, "m");
+    const match = fmMatch[1].match(pattern);
+    return match ? match[1].trim() : null;
+  }
+  async buildContext(recordKindFilter) {
     const files = this.plugin.settings.files;
     const contexts = [];
     for (const path in files) {
@@ -2902,6 +2915,11 @@ ${message}`;
           const file = this.plugin.app.vault.getAbstractFileByPath(path);
           if (file && file instanceof import_obsidian2.TFile && file.extension === "md") {
             const content = await this.plugin.app.vault.read(file);
+            if (recordKindFilter) {
+              const kind = this.parseFrontmatterField(content, "record_kind");
+              if (kind !== recordKindFilter)
+                continue;
+            }
             const truncated = content.length > 2e3 ? content.substring(0, 2e3) + "...[truncated]" : content;
             contexts.push(`--- ${path} ---
 ${truncated}
@@ -2916,7 +2934,7 @@ ${truncated}
     if (totalContext.length > 3e4) {
       totalContext = totalContext.substring(0, 3e4) + "\n...[context truncated due to length]";
     }
-    return totalContext || "No synced notes available.";
+    return totalContext || (recordKindFilter ? `No synced notes with record_kind="${recordKindFilter}" found.` : "No synced notes available.");
   }
   extractCitations(text) {
     const citations = [];
@@ -3338,6 +3356,7 @@ var ChatView = class extends import_obsidian4.ItemView {
     this.welcomeEl = null;
     this.activeTab = "chat";
     this.citationPreviewEl = null;
+    this.activeRecordKindFilter = null;
     this.wikiQueryMessages = [];
     this.wikiStatusCache = null;
     this.wikiCollapsedSections = /* @__PURE__ */ new Set(["maintain", "sessions", "trust", "export", "manifest", "special-files"]);
@@ -3455,6 +3474,9 @@ var ChatView = class extends import_obsidian4.ItemView {
       return;
     }
     this.renderConversationToolbar();
+    if (this.activeTab === "chat") {
+      this.renderRecordKindFilter(this.dashboardContentEl);
+    }
     this.messagesContainer = this.dashboardContentEl.createDiv({ cls: "gemini-chat-messages" });
     const list = this.activeTab === "agent" ? this.agentMessages : this.messages;
     if (list.length === 0) {
@@ -5170,6 +5192,51 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
       text: this.plugin.settings.agentWebSearchEnabled ? "Agent may use current web sources." : "Agent stays focused on vault context unless asked."
     });
   }
+  parseFrontmatter(content) {
+    const result = {};
+    const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
+    if (!match)
+      return result;
+    for (const line of match[1].split("\n")) {
+      const sep = line.indexOf(":");
+      if (sep < 0)
+        continue;
+      const key = line.slice(0, sep).trim();
+      const val = line.slice(sep + 1).trim();
+      if (key && val)
+        result[key] = val;
+    }
+    return result;
+  }
+  renderRecordKindFilter(container) {
+    const filterBar = container.createDiv({ cls: "mok-record-kind-bar" });
+    const kinds = [
+      { key: null, label: "All", icon: "" },
+      { key: "event", label: "Event", icon: "\u{1F4CC}" },
+      { key: "thought", label: "Thought", icon: "\u{1F4AD}" },
+      { key: "idea", label: "Idea", icon: "\u{1F4A1}" },
+      { key: "decision", label: "Decision", icon: "\u2705" },
+      { key: "question", label: "Question", icon: "\u2753" }
+    ];
+    for (const kind of kinds) {
+      const isActive = this.activeRecordKindFilter === kind.key;
+      const chip = filterBar.createEl("button", {
+        cls: isActive ? "mok-record-kind-chip mok-record-kind-chip-active" : "mok-record-kind-chip",
+        text: kind.icon ? `${kind.icon} ${kind.label}` : kind.label
+      });
+      chip.setAttr("aria-pressed", String(isActive));
+      chip.addEventListener("click", () => {
+        this.activeRecordKindFilter = kind.key;
+        this.renderActiveTab();
+      });
+    }
+    if (this.activeRecordKindFilter) {
+      filterBar.createSpan({
+        cls: "mok-record-kind-hint",
+        text: `Filtering by ${this.activeRecordKindFilter}`
+      });
+    }
+  }
   async sendMessage() {
     const text = this.inputEl.value.trim();
     if (!text || this.isLoading)
@@ -5236,7 +5303,7 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
           lastStreamRender = now;
           this.renderActiveTab();
         }
-      }) : await this.plugin.geminiService.chat(text);
+      }) : await this.plugin.geminiService.chat(text, this.activeRecordKindFilter || void 0);
       if (streamingMessage) {
         streamingMessage.content = response.content;
         streamingMessage.citations = response.citations;
@@ -5522,7 +5589,27 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
     const row = container.createDiv({ cls: "gemini-chat-citation-row" });
     const file = this.resolveCitationFile(citation.sourcePath);
     const title = (file == null ? void 0 : file.basename) || this.getCitationTitle(citation.sourcePath);
-    row.createEl("div", { cls: "gemini-chat-citation-title", text: title });
+    const titleRow = row.createDiv({ cls: "gemini-chat-citation-title-row" });
+    titleRow.createEl("div", { cls: "gemini-chat-citation-title", text: title });
+    if (file) {
+      this.app.vault.cachedRead(file).then((content) => {
+        const fm = this.parseFrontmatter(content);
+        const metaRow = titleRow.createDiv({ cls: "mok-citation-meta" });
+        if (fm.record_kind) {
+          metaRow.createEl("span", {
+            cls: "mok-citation-kind",
+            text: fm.record_kind
+          });
+        }
+        if (fm.source_capture_id) {
+          metaRow.createEl("span", {
+            cls: "mok-citation-capture-id",
+            text: `capture: ${fm.source_capture_id.slice(0, 8)}`,
+            title: fm.source_capture_id
+          });
+        }
+      });
+    }
     const actions = row.createDiv({ cls: "gemini-chat-citation-actions" });
     const openButton = actions.createEl("button", {
       cls: "gemini-chat-citation-open",
@@ -5562,11 +5649,32 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
       return "\uB178\uD2B8 \uB0B4\uC6A9\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.";
     }
   }
-  showCitationPreview(target, file, preview) {
+  async showCitationPreview(target, file, preview) {
     this.hideCitationPreview();
     const previewEl = document.body.createDiv({ cls: "gemini-chat-note-popover" });
     previewEl.createDiv({ cls: "gemini-chat-note-popover-title", text: file.basename });
     previewEl.createDiv({ cls: "gemini-chat-note-popover-path", text: file.path });
+    try {
+      const content = await this.app.vault.cachedRead(file);
+      const fm = this.parseFrontmatter(content);
+      if (fm.record_kind || fm.source_capture_id) {
+        const metaEl = previewEl.createDiv({ cls: "mok-popover-meta" });
+        if (fm.record_kind) {
+          metaEl.createEl("span", { cls: "mok-citation-kind", text: fm.record_kind });
+        }
+        if (fm.source_capture_id) {
+          metaEl.createEl("span", {
+            cls: "mok-citation-capture-id",
+            text: `capture: ${fm.source_capture_id.slice(0, 8)}`,
+            title: fm.source_capture_id
+          });
+        }
+        if (fm.occurred_at) {
+          metaEl.createEl("span", { cls: "mok-citation-occurred", text: fm.occurred_at });
+        }
+      }
+    } catch (e) {
+    }
     previewEl.createDiv({ cls: "gemini-chat-note-popover-body", text: preview });
     this.citationPreviewEl = previewEl;
     this.positionCitationPreview(target, previewEl);
