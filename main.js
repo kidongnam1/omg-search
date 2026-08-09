@@ -334,7 +334,8 @@ var GeminiSyncSettingTab = class extends import_obsidian.PluginSettingTab {
           new import_obsidian.Notice("Full sync completed!");
           this.display();
         } catch (error) {
-          new import_obsidian.Notice("Sync failed. Check console for details.");
+          const detail = error instanceof Error ? error.message : String(error);
+          new import_obsidian.Notice(`Sync failed: ${detail.slice(0, 200)}`, 1e4);
           console.error("Sync error:", error);
         } finally {
           button.setButtonText("Sync Now");
@@ -1536,10 +1537,99 @@ var GoogleGenerativeAI = class {
 
 // src/gemini-service.ts
 var import_obsidian2 = require("obsidian");
+
+// src/utils.ts
+function parseFrontmatter(content) {
+  const result = {};
+  const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
+  if (!match)
+    return result;
+  for (const line of match[1].split("\n")) {
+    const sep = line.indexOf(":");
+    if (sep < 0)
+      continue;
+    const key = line.slice(0, sep).trim();
+    const val = line.slice(sep + 1).trim();
+    if (key && val)
+      result[key] = val;
+  }
+  return result;
+}
+function normalizeCitationPath(path) {
+  return path.replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase();
+}
+var STOP_TOKENS = /* @__PURE__ */ new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "from",
+  "that",
+  "this",
+  "you",
+  "your",
+  "are",
+  "was",
+  "were",
+  "have",
+  "has",
+  "not",
+  "can",
+  "will",
+  "\uB300\uD55C",
+  "\uAD00\uB828",
+  "\uC791\uC131",
+  "\uB0B4\uC6A9",
+  "\uB178\uD2B8",
+  "\uD65C\uC6A9",
+  "\uC0AC\uC6A9\uC790",
+  "\uCD08\uC548",
+  "\uC788\uC2B5\uB2C8\uB2E4",
+  "\uD569\uB2C8\uB2E4",
+  "\uC704\uD55C",
+  "\uC5D0\uAC8C",
+  "\uC5D0\uC11C",
+  "\uC73C\uB85C",
+  "\uADF8\uB9AC\uACE0"
+]);
+function tokenizeForSearch(text) {
+  const tokens = /* @__PURE__ */ new Set();
+  const normalized = text.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ");
+  for (const raw of normalized.split(/\s+/)) {
+    const token = raw.trim();
+    if (token.length < 2)
+      continue;
+    if (/^\d+$/.test(token))
+      continue;
+    if (STOP_TOKENS.has(token))
+      continue;
+    tokens.add(token);
+    if (tokens.size >= 32)
+      break;
+  }
+  return Array.from(tokens);
+}
+function estimateTokens(text) {
+  return Math.max(1, Math.ceil(text.length / 4));
+}
+function estimateGeminiCost(model, inputTokens, outputTokens) {
+  let inputRate = 0.3;
+  let outputRate = 2.5;
+  if (model.includes("lite")) {
+    inputRate = 0.1;
+    outputRate = 0.4;
+  } else if (model.includes("pro")) {
+    inputRate = 1.25;
+    outputRate = 10;
+  }
+  return Number((inputTokens / 1e6 * inputRate + outputTokens / 1e6 * outputRate).toFixed(6));
+}
+
+// src/gemini-service.ts
 var API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 var UPLOAD_BASE_URL = "https://generativelanguage.googleapis.com/upload/v1beta";
 var DEFAULT_EMBEDDING_MODEL = "models/gemini-embedding-001";
-var _GeminiService = class {
+var GeminiService = class {
   constructor(plugin) {
     this.genAI = null;
     this.model = null;
@@ -2427,9 +2517,9 @@ Instructions:
       const response = await result.response;
       const text = response.text();
       const usage = response.usageMetadata || {};
-      const outputTokens = Number(usage.candidatesTokenCount || this.plugin.estimateTokens(text));
+      const outputTokens = Number(usage.candidatesTokenCount || estimateTokens(text));
       const inputTokens = Number(
-        usage.promptTokenCount || Math.max(1, this.plugin.estimateTokens(`${systemPrompt}
+        usage.promptTokenCount || Math.max(1, estimateTokens(`${systemPrompt}
 ${userMessage}`))
       );
       await this.plugin.recordBudgetUsage({
@@ -2437,7 +2527,7 @@ ${userMessage}`))
         model: this.plugin.settings.model,
         inputTokens,
         outputTokens,
-        estimatedCostUsd: this.plugin.estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
+        estimatedCostUsd: estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
         success: true
       });
       const cleanedText = this.cleanGeneratedSourceNoise(text);
@@ -2450,7 +2540,7 @@ ${userMessage}`))
         event: "fallback_context_success",
         inputTokens,
         outputTokens,
-        estimatedCostUsd: this.plugin.estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
+        estimatedCostUsd: estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
         citationCount: citations.length,
         sourcePaths: citations.map((citation) => citation.sourcePath),
         responsePreview: this.preview(cleanedText, 1e3)
@@ -2492,7 +2582,7 @@ ${userMessage}`))
     await this.appendChatLog(logPath, {
       event: "file_search_start",
       corpusName,
-      inputTokensEstimate: this.plugin.estimateTokens(input)
+      inputTokensEstimate: estimateTokens(input)
     });
     try {
       const response = await this.apiRequest(
@@ -2531,14 +2621,14 @@ ${userMessage}`))
       );
       const cleanedText = this.cleanGeneratedSourceNoise(text);
       const usage = ((_a = response.data) == null ? void 0 : _a.usageMetadata) || ((_b = response.data) == null ? void 0 : _b.usage_metadata) || {};
-      const outputTokens = Number(usage.candidatesTokenCount || usage.outputTokenCount || this.plugin.estimateTokens(cleanedText));
-      const inputTokens = Number(usage.promptTokenCount || usage.inputTokenCount || this.plugin.estimateTokens(input));
+      const outputTokens = Number(usage.candidatesTokenCount || usage.outputTokenCount || estimateTokens(cleanedText));
+      const inputTokens = Number(usage.promptTokenCount || usage.inputTokenCount || estimateTokens(input));
       await this.plugin.recordBudgetUsage({
         type: "chat",
         model: this.plugin.settings.model,
         inputTokens,
         outputTokens,
-        estimatedCostUsd: this.plugin.estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
+        estimatedCostUsd: estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
         success: true
       });
       this.chatHistory.push({
@@ -2553,7 +2643,7 @@ ${userMessage}`))
         event: "file_search_success",
         inputTokens,
         outputTokens,
-        estimatedCostUsd: this.plugin.estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
+        estimatedCostUsd: estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
         annotationCitationCount: citations.length,
         recoveredCitationCount: recoveredCitations.length,
         sourcePaths: recoveredCitations.map((citation) => citation.sourcePath),
@@ -2689,7 +2779,7 @@ ${userMessage}`))
     return null;
   }
   resolveSyncedCitationUri(uri) {
-    const normalizedUri = this.normalizeCitationPath(uri);
+    const normalizedUri = normalizeCitationPath(uri);
     const uriTail = normalizedUri.split("/").pop() || normalizedUri;
     for (const path in this.plugin.settings.files) {
       const syncData = this.plugin.settings.files[path];
@@ -2697,7 +2787,7 @@ ${userMessage}`))
         continue;
       if (!this.plugin.isInSyncFolder(path))
         continue;
-      const normalizedSyncUri = this.normalizeCitationPath(syncData.uri || "");
+      const normalizedSyncUri = normalizeCitationPath(syncData.uri || "");
       if (!normalizedSyncUri)
         continue;
       const syncUriTail = normalizedSyncUri.split("/").pop() || normalizedSyncUri;
@@ -2778,7 +2868,7 @@ ${text}`, 5);
     return Array.from(ids);
   }
   async rankSyncedNotes(query, limit) {
-    const tokens = this.tokenizeForSearch(query);
+    const tokens = tokenizeForSearch(query);
     if (tokens.length === 0)
       return [];
     const scored = [];
@@ -2813,26 +2903,6 @@ ${content.slice(0, 5e3)}`.toLowerCase();
     }
     return scored.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path)).slice(0, limit).map((item) => item.path);
   }
-  tokenizeForSearch(text) {
-    const tokens = /* @__PURE__ */ new Set();
-    const normalized = text.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ");
-    for (const raw of normalized.split(/\s+/)) {
-      const token = raw.trim();
-      if (token.length < 2)
-        continue;
-      if (/^\d+$/.test(token))
-        continue;
-      if (this.isStopToken(token))
-        continue;
-      tokens.add(token);
-      if (tokens.size >= 32)
-        break;
-    }
-    return Array.from(tokens);
-  }
-  isStopToken(token) {
-    return _GeminiService.STOP_TOKENS.has(token);
-  }
   async sendMessageWithRetry(chat, userMessage) {
     let lastError;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -2866,14 +2936,6 @@ ${content.slice(0, 5e3)}`.toLowerCase();
     return `Gemini \uC694\uCCAD \uC2E4\uD328. \uD604\uC7AC \uBAA8\uB378: \`${model}\`.
 
 ${message}`;
-  }
-  parseFrontmatterField(content, field) {
-    const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
-    if (!fmMatch)
-      return null;
-    const pattern = new RegExp(`^${field}:\\s*(.+)`, "m");
-    const match = fmMatch[1].match(pattern);
-    return match ? match[1].trim() : null;
   }
   async buildContext(recordKindFilter) {
     var _a;
@@ -2930,7 +2992,7 @@ ${truncated}
     const candidates = [cleaned];
     if (!cleaned.endsWith(".md"))
       candidates.push(`${cleaned}.md`);
-    const normalizedCandidates = new Set(candidates.map((path) => this.normalizeCitationPath(path)));
+    const normalizedCandidates = new Set(candidates.map((path) => normalizeCitationPath(path)));
     for (const path in this.plugin.settings.files) {
       if (this.plugin.settings.files[path].status !== "synced")
         continue;
@@ -2939,16 +3001,13 @@ ${truncated}
       const file = this.plugin.app.vault.getAbstractFileByPath(path);
       if (!(file instanceof import_obsidian2.TFile))
         continue;
-      const normalizedPath = this.normalizeCitationPath(file.path);
-      const normalizedName = this.normalizeCitationPath(file.name);
+      const normalizedPath = normalizeCitationPath(file.path);
+      const normalizedName = normalizeCitationPath(file.name);
       if (normalizedCandidates.has(normalizedPath) || normalizedCandidates.has(normalizedName) || Array.from(normalizedCandidates).some((candidate) => normalizedPath.endsWith(candidate))) {
         return file.path;
       }
     }
     return null;
-  }
-  normalizeCitationPath(path) {
-    return path.replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase();
   }
   clearChatHistory() {
     this.chatHistory = [];
@@ -2978,41 +3037,6 @@ ${truncated}
     }
   }
 };
-var GeminiService = _GeminiService;
-GeminiService.STOP_TOKENS = /* @__PURE__ */ new Set([
-  "the",
-  "and",
-  "for",
-  "with",
-  "from",
-  "that",
-  "this",
-  "you",
-  "your",
-  "are",
-  "was",
-  "were",
-  "have",
-  "has",
-  "not",
-  "can",
-  "will",
-  "\uB300\uD55C",
-  "\uAD00\uB828",
-  "\uC791\uC131",
-  "\uB0B4\uC6A9",
-  "\uB178\uD2B8",
-  "\uD65C\uC6A9",
-  "\uC0AC\uC6A9\uC790",
-  "\uCD08\uC548",
-  "\uC788\uC2B5\uB2C8\uB2E4",
-  "\uD569\uB2C8\uB2E4",
-  "\uC704\uD55C",
-  "\uC5D0\uAC8C",
-  "\uC5D0\uC11C",
-  "\uC73C\uB85C",
-  "\uADF8\uB9AC\uACE0"
-]);
 
 // src/sync-engine.ts
 var import_obsidian3 = require("obsidian");
@@ -4137,7 +4161,8 @@ var ChatView = class extends import_obsidian4.ItemView {
         new import_obsidian4.Notice(`Knowledge graph built: ${nodeCount} nodes, ${edgeCount} links, ${communityCount} communities`);
         await this.app.workspace.openLinkText(canvasPath || jsonPath, "", true);
       } catch (error) {
-        new import_obsidian4.Notice("Failed to build knowledge graph.");
+        const detail = error instanceof Error ? error.message : String(error);
+        new import_obsidian4.Notice(`Failed to build knowledge graph: ${detail.slice(0, 150)}`, 8e3);
         console.error("Graph build error:", error);
       } finally {
         graphBtn.removeAttribute("disabled");
@@ -4617,9 +4642,9 @@ ${node.degree || 0} linked notes`
     const detailPanel = graphWrap.createDiv({ cls: "mok-graph-detail mok-graph-detail-hidden" });
     let graph = await this.loadKnowledgeGraph();
     if (!graph) {
-      statsEl.setText("No graph yet. Build one from your synced notes.");
+      statsEl.setText("No graph yet.");
       const empty = graphWrap.createDiv({ cls: "mok-graph-empty" });
-      empty.createEl("div", { text: "No graph artifact found." });
+      empty.createEl("div", { text: "Build a knowledge graph to visualize connections between your synced notes." });
       empty.createEl("button", {
         cls: "gemini-chat-action-btn",
         text: "Build knowledge graph"
@@ -4666,7 +4691,8 @@ ${node.degree || 0} linked notes`
           redraw();
         new import_obsidian4.Notice("Knowledge graph rebuilt.");
       } catch (error) {
-        new import_obsidian4.Notice("Failed to rebuild graph.");
+        const detail = error instanceof Error ? error.message : String(error);
+        new import_obsidian4.Notice(`Failed to rebuild graph: ${detail.slice(0, 150)}`, 8e3);
         console.error("Graph rebuild error:", error);
       } finally {
         rebuildBtn.removeAttribute("disabled");
@@ -5169,11 +5195,13 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
         text: "\u26A0\uFE0F No notes synced yet. Configure sync in settings to get started."
       });
     }
-    if (this.activeTab === "agent")
-      return;
     const examplesEl = this.welcomeEl.createDiv({ cls: "gemini-chat-examples" });
     examplesEl.createEl("p", { text: "Try asking:" });
-    const examples = [
+    const examples = this.activeTab === "agent" ? [
+      "Summarize all notes from the last week",
+      "Find and link related notes across folders",
+      "Draft a new note on [topic] based on existing knowledge"
+    ] : [
       "What are the main topics in my notes?",
       "Summarize my notes about [topic]",
       "Find connections between [topic A] and [topic B]"
@@ -5206,22 +5234,6 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
       text: this.plugin.settings.agentWebSearchEnabled ? "Agent may use current web sources." : "Agent stays focused on vault context unless asked."
     });
   }
-  parseFrontmatter(content) {
-    const result = {};
-    const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
-    if (!match)
-      return result;
-    for (const line of match[1].split("\n")) {
-      const sep = line.indexOf(":");
-      if (sep < 0)
-        continue;
-      const key = line.slice(0, sep).trim();
-      const val = line.slice(sep + 1).trim();
-      if (key && val)
-        result[key] = val;
-    }
-    return result;
-  }
   renderRecordKindFilter(container) {
     const filterBar = container.createDiv({ cls: "mok-record-kind-bar" });
     const kinds = [
@@ -5253,8 +5265,12 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
   }
   async sendMessage() {
     const text = this.inputEl.value.trim();
-    if (!text || this.isLoading)
+    if (!text)
       return;
+    if (this.isLoading) {
+      new import_obsidian4.Notice("Please wait for the current response to finish.");
+      return;
+    }
     const requestTab = this.activeTab;
     const requestContainer = this.messagesContainer;
     const requestInput = this.inputEl;
@@ -5607,7 +5623,7 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
     titleRow.createEl("div", { cls: "gemini-chat-citation-title", text: title });
     if (file) {
       this.app.vault.cachedRead(file).then((content) => {
-        const fm = this.parseFrontmatter(content);
+        const fm = parseFrontmatter(content);
         const metaRow = titleRow.createDiv({ cls: "mok-citation-meta" });
         if (fm.record_kind) {
           metaRow.createEl("span", {
@@ -5670,7 +5686,7 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
     previewEl.createDiv({ cls: "gemini-chat-note-popover-path", text: file.path });
     try {
       const content = await this.app.vault.cachedRead(file);
-      const fm = this.parseFrontmatter(content);
+      const fm = parseFrontmatter(content);
       if (fm.record_kind || fm.source_capture_id) {
         const metaEl = previewEl.createDiv({ cls: "mok-popover-meta" });
         if (fm.record_kind) {
@@ -5750,7 +5766,17 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
     return ((_a = cleaned.split("/").pop()) == null ? void 0 : _a.replace(/\.md$/i, "")) || cleaned;
   }
   clearChat() {
-    this.startNewConversation();
+    const tab = this.activeTab === "agent" ? "Agent" : "Chat";
+    const msgs = this.activeTab === "agent" ? this.agentMessages : this.messages;
+    if (msgs.length === 0)
+      return;
+    const modal = new ConfirmModal(
+      this.app,
+      `Clear ${tab} history?`,
+      `This will delete all ${msgs.length} messages in the current ${tab} conversation. This cannot be undone.`,
+      () => this.startNewConversation()
+    );
+    modal.open();
   }
   startNewConversation() {
     if (this.isLoading && this.loadingTab === this.activeTab) {
@@ -5857,7 +5883,7 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
       return content;
     }
     const now = new Date();
-    const dateStr = now.toLocaleDateString("ko-KR", {
+    const dateStr = now.toLocaleString(void 0, {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -5898,7 +5924,8 @@ ${content}`;
       new import_obsidian4.Notice(`\u2705 Saved to ${file.path}`);
       this.renderActiveTab();
     } catch (error) {
-      new import_obsidian4.Notice("Failed to save workspace note.");
+      const detail = error instanceof Error ? error.message : String(error);
+      new import_obsidian4.Notice(`Failed to save workspace note: ${detail.slice(0, 150)}`, 8e3);
       console.error("Workspace save error:", error);
     }
   }
@@ -5952,7 +5979,8 @@ ${content}`;
       new import_obsidian4.Notice(`\u2705 Created new note: ${newFile.path}`);
       this.renderActiveTab();
     } catch (error) {
-      new import_obsidian4.Notice("Failed to create note. Please try again.");
+      const detail = error instanceof Error ? error.message : String(error);
+      new import_obsidian4.Notice(`Failed to create note: ${detail.slice(0, 150)}`, 8e3);
       console.error("Create note error:", error);
     }
   }
@@ -5969,6 +5997,32 @@ ${content}`;
     setTimeout(() => {
       this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
     }, 50);
+  }
+};
+var ConfirmModal = class extends import_obsidian4.Modal {
+  constructor(app, title, body, onConfirm) {
+    super(app);
+    this.title = title;
+    this.body = body;
+    this.onConfirm = onConfirm;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl("h3", { text: this.title });
+    contentEl.createEl("p", { text: this.body });
+    const btnRow = contentEl.createDiv({ cls: "modal-button-container" });
+    btnRow.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
+    const confirmBtn = btnRow.createEl("button", {
+      cls: "mod-warning",
+      text: "Clear"
+    });
+    confirmBtn.addEventListener("click", () => {
+      this.onConfirm();
+      this.close();
+    });
+  }
+  onClose() {
+    this.contentEl.empty();
   }
 };
 
@@ -7319,21 +7373,13 @@ var GeminiSyncPlugin = class extends import_obsidian7.Plugin {
     }
   }
   estimateGeminiCost(model, inputTokens, outputTokens) {
-    const rates = this.getEstimatedGeminiRates(model);
-    return Number((inputTokens / 1e6 * rates.inputUsdPerMillion + outputTokens / 1e6 * rates.outputUsdPerMillion).toFixed(6));
+    return estimateGeminiCost(model, inputTokens, outputTokens);
   }
   estimateTokens(text) {
-    return Math.max(1, Math.ceil(text.length / 4));
+    return estimateTokens(text);
   }
   getCurrentBudgetMonth() {
     return new Date().toISOString().slice(0, 7);
-  }
-  getEstimatedGeminiRates(model) {
-    if (model.includes("lite"))
-      return { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.4 };
-    if (model.includes("pro"))
-      return { inputUsdPerMillion: 1.25, outputUsdPerMillion: 10 };
-    return { inputUsdPerMillion: 0.3, outputUsdPerMillion: 2.5 };
   }
   // Update sync status in chat view if it's open
   updateChatViewSyncStatus() {

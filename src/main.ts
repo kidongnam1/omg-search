@@ -5,6 +5,7 @@ import { SyncEngine } from './sync-engine';
 import { ChatView, CHAT_VIEW_TYPE } from './chat-view';
 import { AgentService } from './agent-service';
 import { WikiService } from './wiki-service';
+import { estimateTokens as _estimateTokens, estimateGeminiCost as _estimateGeminiCost } from './utils';
 
 export interface BudgetUsageEvent {
 	type: 'chat';
@@ -328,25 +329,15 @@ export default class GeminiSyncPlugin extends Plugin {
 	}
 
 	estimateGeminiCost(model: string, inputTokens: number, outputTokens: number): number {
-		const rates = this.getEstimatedGeminiRates(model);
-		return Number((
-			(inputTokens / 1_000_000) * rates.inputUsdPerMillion +
-			(outputTokens / 1_000_000) * rates.outputUsdPerMillion
-		).toFixed(6));
+		return _estimateGeminiCost(model, inputTokens, outputTokens);
 	}
 
 	estimateTokens(text: string): number {
-		return Math.max(1, Math.ceil(text.length / 4));
+		return _estimateTokens(text);
 	}
 
 	getCurrentBudgetMonth(): string {
 		return new Date().toISOString().slice(0, 7);
-	}
-
-	private getEstimatedGeminiRates(model: string): { inputUsdPerMillion: number; outputUsdPerMillion: number } {
-		if (model.includes('lite')) return { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.4 };
-		if (model.includes('pro')) return { inputUsdPerMillion: 1.25, outputUsdPerMillion: 10 };
-		return { inputUsdPerMillion: 0.3, outputUsdPerMillion: 2.5 };
 	}
 
 	// Update sync status in chat view if it's open
