@@ -188,6 +188,13 @@ export default class GeminiSyncPlugin extends Plugin {
 
 	onunload() {
 		console.log('Unloading Master of Knowledge Plugin');
+		this.syncEngine.stop();
+		if (this.wikiService) {
+			this.wikiService.stop();
+		}
+		if (this.agentService && typeof (this.agentService as any).stop === 'function') {
+			(this.agentService as any).stop();
+		}
 	}
 
 	async loadSettings() {

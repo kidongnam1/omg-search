@@ -1539,7 +1539,7 @@ var import_obsidian2 = require("obsidian");
 var API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 var UPLOAD_BASE_URL = "https://generativelanguage.googleapis.com/upload/v1beta";
 var DEFAULT_EMBEDDING_MODEL = "models/gemini-embedding-001";
-var GeminiService = class {
+var _GeminiService = class {
   constructor(plugin) {
     this.genAI = null;
     this.model = null;
@@ -2313,9 +2313,11 @@ var GeminiService = class {
       if (getResponse.ok && getResponse.data.displayName) {
         displayName = getResponse.data.displayName;
       }
-      await this.deleteDocument(documentName);
       const newDoc = await this.uploadDocument(corpusName, displayName, content);
-      return !!newDoc;
+      if (!newDoc)
+        return false;
+      await this.deleteDocument(documentName);
+      return true;
     } catch (error) {
       console.error("Update document error:", error);
       return false;
@@ -2829,40 +2831,7 @@ ${content.slice(0, 5e3)}`.toLowerCase();
     return Array.from(tokens);
   }
   isStopToken(token) {
-    return (/* @__PURE__ */ new Set([
-      "the",
-      "and",
-      "for",
-      "with",
-      "from",
-      "that",
-      "this",
-      "you",
-      "your",
-      "are",
-      "was",
-      "were",
-      "have",
-      "has",
-      "not",
-      "can",
-      "will",
-      "\uB300\uD55C",
-      "\uAD00\uB828",
-      "\uC791\uC131",
-      "\uB0B4\uC6A9",
-      "\uB178\uD2B8",
-      "\uD65C\uC6A9",
-      "\uC0AC\uC6A9\uC790",
-      "\uCD08\uC548",
-      "\uC788\uC2B5\uB2C8\uB2E4",
-      "\uD569\uB2C8\uB2E4",
-      "\uC704\uD55C",
-      "\uC5D0\uAC8C",
-      "\uC5D0\uC11C",
-      "\uC73C\uB85C",
-      "\uADF8\uB9AC\uACE0"
-    ])).has(token);
+    return _GeminiService.STOP_TOKENS.has(token);
   }
   async sendMessageWithRetry(chat, userMessage) {
     let lastError;
@@ -2907,6 +2876,7 @@ ${message}`;
     return match ? match[1].trim() : null;
   }
   async buildContext(recordKindFilter) {
+    var _a;
     const files = this.plugin.settings.files;
     const contexts = [];
     for (const path in files) {
@@ -2914,12 +2884,13 @@ ${message}`;
         try {
           const file = this.plugin.app.vault.getAbstractFileByPath(path);
           if (file && file instanceof import_obsidian2.TFile && file.extension === "md") {
-            const content = await this.plugin.app.vault.read(file);
             if (recordKindFilter) {
-              const kind = this.parseFrontmatterField(content, "record_kind");
+              const cache = this.plugin.app.metadataCache.getFileCache(file);
+              const kind = (_a = cache == null ? void 0 : cache.frontmatter) == null ? void 0 : _a["record_kind"];
               if (kind !== recordKindFilter)
                 continue;
             }
+            const content = await this.plugin.app.vault.read(file);
             const truncated = content.length > 2e3 ? content.substring(0, 2e3) + "...[truncated]" : content;
             contexts.push(`--- ${path} ---
 ${truncated}
@@ -3007,6 +2978,41 @@ ${truncated}
     }
   }
 };
+var GeminiService = _GeminiService;
+GeminiService.STOP_TOKENS = /* @__PURE__ */ new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "from",
+  "that",
+  "this",
+  "you",
+  "your",
+  "are",
+  "was",
+  "were",
+  "have",
+  "has",
+  "not",
+  "can",
+  "will",
+  "\uB300\uD55C",
+  "\uAD00\uB828",
+  "\uC791\uC131",
+  "\uB0B4\uC6A9",
+  "\uB178\uD2B8",
+  "\uD65C\uC6A9",
+  "\uC0AC\uC6A9\uC790",
+  "\uCD08\uC548",
+  "\uC788\uC2B5\uB2C8\uB2E4",
+  "\uD569\uB2C8\uB2E4",
+  "\uC704\uD55C",
+  "\uC5D0\uAC8C",
+  "\uC5D0\uC11C",
+  "\uC73C\uB85C",
+  "\uADF8\uB9AC\uACE0"
+]);
 
 // src/sync-engine.ts
 var import_obsidian3 = require("obsidian");
@@ -3021,6 +3027,10 @@ var SyncEngine = class {
       this.plugin.settings.syncDebounceMs,
       true
     );
+  }
+  stop() {
+    this.syncQueue.clear();
+    this.isSyncing = false;
   }
   // ==================== Hash Utilities ====================
   async calculateHash(content) {
@@ -3153,6 +3163,9 @@ var SyncEngine = class {
     }
     this.plugin.updateChatViewSyncStatus();
     console.log(`[SyncEngine] Queue processed: ${successCount} success, ${errorCount} errors`);
+    if (this.syncQueue.size > 0) {
+      this.debouncedProcessQueue();
+    }
   }
   // ==================== File Sync Logic ====================
   async syncFile(file, corpusName, syncApiKey) {
@@ -5038,8 +5051,9 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
       });
     });
     const visibleEdges = edges.filter((edge) => positions.has(edge.from) && positions.has(edge.to)).slice(0, 420);
-    for (let iter = 0; iter < 180; iter++) {
-      const alpha = 1 - iter / 180;
+    const maxIter = nodes.length > 200 ? 60 : nodes.length > 100 ? 100 : 180;
+    for (let iter = 0; iter < maxIter; iter++) {
+      const alpha = 1 - iter / maxIter;
       for (let i = 0; i < nodes.length; i++) {
         const a = positions.get(nodes[i].id);
         if (!a)
@@ -5787,10 +5801,14 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
         item.action();
       });
     }
+    let dropdownAc = null;
     const closeDropdown = (e) => {
       if (!applyContainer.contains(e.target)) {
         dropdownMenu.style.display = "none";
-        document.removeEventListener("click", closeDropdown);
+        if (dropdownAc) {
+          dropdownAc.abort();
+          dropdownAc = null;
+        }
       }
     };
     dropdownArrow.addEventListener("click", (e) => {
@@ -5799,11 +5817,21 @@ Degree ${node.degree || 0} \xB7 PageRank ${Math.round((node.pageRank || 0) * 100
       const isCurrentlyVisible = dropdownMenu.style.display === "block";
       if (isCurrentlyVisible) {
         dropdownMenu.style.display = "none";
-        document.removeEventListener("click", closeDropdown);
+        if (dropdownAc) {
+          dropdownAc.abort();
+          dropdownAc = null;
+        }
       } else {
         dropdownMenu.style.display = "block";
+        if (dropdownAc) {
+          dropdownAc.abort();
+        }
+        dropdownAc = new AbortController();
+        const signal = dropdownAc.signal;
         setTimeout(() => {
-          document.addEventListener("click", closeDropdown);
+          if (!signal.aborted) {
+            document.addEventListener("click", closeDropdown, { signal });
+          }
         }, 0);
       }
     });
@@ -6775,13 +6803,13 @@ var WikiService = class {
     return checks;
   }
   async runCrossLinker() {
-    return this.runCliCommand(["lint", "--consolidate"], 6e4);
+    return this.runCliCommand(["cross-link"], 6e4);
   }
   async runDedup() {
-    return this.runCliCommand(["lint", "--consolidate"], 6e4);
+    return this.runCliCommand(["dedup"], 6e4);
   }
   async runRebuild() {
-    return this.runCliCommand(["lint", "--consolidate"], 12e4);
+    return this.runCliCommand(["rebuild"], 12e4);
   }
   async runSync() {
     return this.runCliCommand(["sync"], 3e4);
@@ -6929,7 +6957,7 @@ var WikiService = class {
   async runExport(format) {
     const cli = this.requireCli();
     try {
-      const args = ["graph-analyse"];
+      const args = ["graph-analyse", "--format", format];
       const out = await this.exec(cli, args, 3e4, this.getEnv());
       return { ok: out.exitCode === 0, output: out.stdout.trim(), error: out.exitCode !== 0 ? out.stderr.trim() : void 0 };
     } catch (e) {
@@ -7171,6 +7199,13 @@ var GeminiSyncPlugin = class extends import_obsidian7.Plugin {
   }
   onunload() {
     console.log("Unloading Master of Knowledge Plugin");
+    this.syncEngine.stop();
+    if (this.wikiService) {
+      this.wikiService.stop();
+    }
+    if (this.agentService && typeof this.agentService.stop === "function") {
+      this.agentService.stop();
+    }
   }
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
