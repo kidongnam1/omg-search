@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI, GenerativeModel, Content } from '@google/generative-ai';
 import { TFile, requestUrl, RequestUrlParam } from 'obsidian';
 import GeminiSyncPlugin from './main';
+import { tokenizeForSearch, normalizeCitationPath, estimateTokens, estimateGeminiCost } from './utils';
 
 const API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 const UPLOAD_BASE_URL = 'https://generativelanguage.googleapis.com/upload/v1beta';
@@ -1129,17 +1130,17 @@ Instructions:
 			const response = await result.response;
 			const text = response.text();
 			const usage = (response as any).usageMetadata || {};
-			const outputTokens = Number(usage.candidatesTokenCount || this.plugin.estimateTokens(text));
+			const outputTokens = Number(usage.candidatesTokenCount || estimateTokens(text));
 			const inputTokens = Number(
 				usage.promptTokenCount ||
-				Math.max(1, this.plugin.estimateTokens(`${systemPrompt}\n${userMessage}`))
+				Math.max(1, estimateTokens(`${systemPrompt}\n${userMessage}`))
 			);
 			await this.plugin.recordBudgetUsage({
 				type: 'chat',
 				model: this.plugin.settings.model,
 				inputTokens,
 				outputTokens,
-				estimatedCostUsd: this.plugin.estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
+				estimatedCostUsd: estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
 				success: true
 			});
 
@@ -1153,7 +1154,7 @@ Instructions:
 				event: 'fallback_context_success',
 				inputTokens,
 				outputTokens,
-				estimatedCostUsd: this.plugin.estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
+				estimatedCostUsd: estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
 				citationCount: citations.length,
 				sourcePaths: citations.map(citation => citation.sourcePath),
 				responsePreview: this.preview(cleanedText, 1000)
@@ -1199,7 +1200,7 @@ Instructions:
 		await this.appendChatLog(logPath, {
 			event: 'file_search_start',
 			corpusName,
-			inputTokensEstimate: this.plugin.estimateTokens(input)
+			inputTokensEstimate: estimateTokens(input)
 		});
 
 		try {
@@ -1242,14 +1243,14 @@ Instructions:
 			const cleanedText = this.cleanGeneratedSourceNoise(text);
 
 			const usage = response.data?.usageMetadata || response.data?.usage_metadata || {};
-			const outputTokens = Number(usage.candidatesTokenCount || usage.outputTokenCount || this.plugin.estimateTokens(cleanedText));
-			const inputTokens = Number(usage.promptTokenCount || usage.inputTokenCount || this.plugin.estimateTokens(input));
+			const outputTokens = Number(usage.candidatesTokenCount || usage.outputTokenCount || estimateTokens(cleanedText));
+			const inputTokens = Number(usage.promptTokenCount || usage.inputTokenCount || estimateTokens(input));
 			await this.plugin.recordBudgetUsage({
 				type: 'chat',
 				model: this.plugin.settings.model,
 				inputTokens,
 				outputTokens,
-				estimatedCostUsd: this.plugin.estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
+				estimatedCostUsd: estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
 				success: true
 			});
 
@@ -1265,7 +1266,7 @@ Instructions:
 				event: 'file_search_success',
 				inputTokens,
 				outputTokens,
-				estimatedCostUsd: this.plugin.estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
+				estimatedCostUsd: estimateGeminiCost(this.plugin.settings.model, inputTokens, outputTokens),
 				annotationCitationCount: citations.length,
 				recoveredCitationCount: recoveredCitations.length,
 				sourcePaths: recoveredCitations.map(citation => citation.sourcePath),
@@ -1410,13 +1411,13 @@ Instructions:
 	}
 
 	private resolveSyncedCitationUri(uri: string): string | null {
-		const normalizedUri = this.normalizeCitationPath(uri);
+		const normalizedUri = normalizeCitationPath(uri);
 		const uriTail = normalizedUri.split('/').pop() || normalizedUri;
 		for (const path in this.plugin.settings.files) {
 			const syncData = this.plugin.settings.files[path];
 			if (syncData.status !== 'synced') continue;
 			if (!this.plugin.isInSyncFolder(path)) continue;
-			const normalizedSyncUri = this.normalizeCitationPath(syncData.uri || '');
+			const normalizedSyncUri = normalizeCitationPath(syncData.uri || '');
 			if (!normalizedSyncUri) continue;
 			const syncUriTail = normalizedSyncUri.split('/').pop() || normalizedSyncUri;
 			if (syncData.uri === uri ||
@@ -1520,7 +1521,7 @@ Instructions:
 	}
 
 	private async rankSyncedNotes(query: string, limit: number): Promise<string[]> {
-		const tokens = this.tokenizeForSearch(query);
+		const tokens = tokenizeForSearch(query);
 		if (tokens.length === 0) return [];
 
 		const scored: { path: string; score: number }[] = [];
@@ -1554,34 +1555,6 @@ Instructions:
 			.map(item => item.path);
 	}
 
-	private tokenizeForSearch(text: string): string[] {
-		const tokens = new Set<string>();
-		const normalized = text
-			.toLowerCase()
-			.replace(/[^\p{L}\p{N}\s]/gu, ' ');
-
-		for (const raw of normalized.split(/\s+/)) {
-			const token = raw.trim();
-			if (token.length < 2) continue;
-			if (/^\d+$/.test(token)) continue;
-			if (this.isStopToken(token)) continue;
-			tokens.add(token);
-			if (tokens.size >= 32) break;
-		}
-
-		return Array.from(tokens);
-	}
-
-	private static readonly STOP_TOKENS = new Set([
-		'the', 'and', 'for', 'with', 'from', 'that', 'this', 'you', 'your',
-		'are', 'was', 'were', 'have', 'has', 'not', 'can', 'will',
-		'대한', '관련', '작성', '내용', '노트', '활용', '사용자', '초안',
-		'있습니다', '합니다', '위한', '에게', '에서', '으로', '그리고'
-	]);
-
-	private isStopToken(token: string): boolean {
-		return GeminiService.STOP_TOKENS.has(token);
-	}
 
 	private async sendMessageWithRetry(chat: any, userMessage: string) {
 		let lastError: unknown;
@@ -1615,14 +1588,6 @@ Instructions:
 			].join('\n');
 		}
 		return `Gemini 요청 실패. 현재 모델: \`${model}\`.\n\n${message}`;
-	}
-
-	private parseFrontmatterField(content: string, field: string): string | null {
-		const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
-		if (!fmMatch) return null;
-		const pattern = new RegExp(`^${field}:\\s*(.+)`, 'm');
-		const match = fmMatch[1].match(pattern);
-		return match ? match[1].trim() : null;
 	}
 
 	private async buildContext(recordKindFilter?: string): Promise<string> {
@@ -1696,7 +1661,7 @@ Instructions:
 
 		const candidates = [cleaned];
 		if (!cleaned.endsWith('.md')) candidates.push(`${cleaned}.md`);
-		const normalizedCandidates = new Set(candidates.map(path => this.normalizeCitationPath(path)));
+		const normalizedCandidates = new Set(candidates.map(path => normalizeCitationPath(path)));
 
 		for (const path in this.plugin.settings.files) {
 			if (this.plugin.settings.files[path].status !== 'synced') continue;
@@ -1704,8 +1669,8 @@ Instructions:
 			const file = this.plugin.app.vault.getAbstractFileByPath(path);
 			if (!(file instanceof TFile)) continue;
 
-			const normalizedPath = this.normalizeCitationPath(file.path);
-			const normalizedName = this.normalizeCitationPath(file.name);
+			const normalizedPath = normalizeCitationPath(file.path);
+			const normalizedName = normalizeCitationPath(file.name);
 			if (normalizedCandidates.has(normalizedPath) ||
 				normalizedCandidates.has(normalizedName) ||
 				Array.from(normalizedCandidates).some(candidate => normalizedPath.endsWith(candidate))) {
@@ -1714,10 +1679,6 @@ Instructions:
 		}
 
 		return null;
-	}
-
-	private normalizeCitationPath(path: string): string {
-		return path.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
 	}
 
 	clearChatHistory() {

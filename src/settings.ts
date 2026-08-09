@@ -472,7 +472,8 @@ export class GeminiSyncSettingTab extends PluginSettingTab {
 						new Notice('Full sync completed!');
 						this.display(); // Refresh dashboard
 					} catch (error) {
-						new Notice('Sync failed. Check console for details.');
+						const detail = error instanceof Error ? error.message : String(error);
+						new Notice(`Sync failed: ${detail.slice(0, 200)}`, 10000);
 						console.error('Sync error:', error);
 					} finally {
 						button.setButtonText('Sync Now');

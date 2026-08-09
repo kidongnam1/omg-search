@@ -1,6 +1,7 @@
 import { ItemView, WorkspaceLeaf, MarkdownRenderer, Notice, TFile, Modal, FuzzySuggestModal, App, Platform } from 'obsidian';
 import GeminiSyncPlugin from './main';
 import { ChatMessage, Citation } from './gemini-service';
+import { parseFrontmatter } from './utils';
 
 type DashboardTab = 'chat' | 'agent' | 'wiki' | 'budget' | 'workspace' | 'graph' | 'settings';
 
@@ -942,7 +943,8 @@ export class ChatView extends ItemView {
 				await this.app.workspace.openLinkText(canvasPath || jsonPath, '', true);
 				void reportPath;
 			} catch (error) {
-				new Notice('Failed to build knowledge graph.');
+				const detail = error instanceof Error ? error.message : String(error);
+				new Notice(`Failed to build knowledge graph: ${detail.slice(0, 150)}`, 8000);
 				console.error('Graph build error:', error);
 			} finally {
 				graphBtn.removeAttribute('disabled');
@@ -1484,9 +1486,9 @@ export class ChatView extends ItemView {
 
 		let graph = await this.loadKnowledgeGraph();
 		if (!graph) {
-			statsEl.setText('No graph yet. Build one from your synced notes.');
+			statsEl.setText('No graph yet.');
 			const empty = graphWrap.createDiv({ cls: 'mok-graph-empty' });
-			empty.createEl('div', { text: 'No graph artifact found.' });
+			empty.createEl('div', { text: 'Build a knowledge graph to visualize connections between your synced notes.' });
 			empty.createEl('button', {
 				cls: 'gemini-chat-action-btn',
 				text: 'Build knowledge graph'
@@ -1533,7 +1535,8 @@ export class ChatView extends ItemView {
 				if (currentGraph) redraw();
 				new Notice('Knowledge graph rebuilt.');
 			} catch (error) {
-				new Notice('Failed to rebuild graph.');
+				const detail = error instanceof Error ? error.message : String(error);
+				new Notice(`Failed to rebuild graph: ${detail.slice(0, 150)}`, 8000);
 				console.error('Graph rebuild error:', error);
 			} finally {
 				rebuildBtn.removeAttribute('disabled');
@@ -2083,16 +2086,20 @@ export class ChatView extends ItemView {
 		}
 
 		// Example prompts
-		if (this.activeTab === 'agent') return;
-
 		const examplesEl = this.welcomeEl.createDiv({ cls: 'gemini-chat-examples' });
 		examplesEl.createEl('p', { text: 'Try asking:' });
 
-		const examples = [
-			'What are the main topics in my notes?',
-			'Summarize my notes about [topic]',
-			'Find connections between [topic A] and [topic B]'
-		];
+		const examples = this.activeTab === 'agent'
+			? [
+				'Summarize all notes from the last week',
+				'Find and link related notes across folders',
+				'Draft a new note on [topic] based on existing knowledge'
+			]
+			: [
+				'What are the main topics in my notes?',
+				'Summarize my notes about [topic]',
+				'Find connections between [topic A] and [topic B]'
+			];
 
 		for (const example of examples) {
 			const exampleBtn = examplesEl.createEl('button', {
@@ -2128,20 +2135,6 @@ export class ChatView extends ItemView {
 		});
 	}
 
-	private parseFrontmatter(content: string): Record<string, string> {
-		const result: Record<string, string> = {};
-		const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
-		if (!match) return result;
-		for (const line of match[1].split('\n')) {
-			const sep = line.indexOf(':');
-			if (sep < 0) continue;
-			const key = line.slice(0, sep).trim();
-			const val = line.slice(sep + 1).trim();
-			if (key && val) result[key] = val;
-		}
-		return result;
-	}
-
 	private renderRecordKindFilter(container: HTMLElement) {
 		const filterBar = container.createDiv({ cls: 'mok-record-kind-bar' });
 		const kinds = [
@@ -2174,7 +2167,11 @@ export class ChatView extends ItemView {
 
 	private async sendMessage() {
 		const text = this.inputEl.value.trim();
-		if (!text || this.isLoading) return;
+		if (!text) return;
+		if (this.isLoading) {
+			new Notice('Please wait for the current response to finish.');
+			return;
+		}
 		const requestTab = this.activeTab;
 		const requestContainer = this.messagesContainer;
 		const requestInput = this.inputEl;
@@ -2606,7 +2603,7 @@ export class ChatView extends ItemView {
 
 		if (file) {
 			this.app.vault.cachedRead(file).then(content => {
-				const fm = this.parseFrontmatter(content);
+				const fm = parseFrontmatter(content);
 				const metaRow = titleRow.createDiv({ cls: 'mok-citation-meta' });
 				if (fm.record_kind) {
 					metaRow.createEl('span', {
@@ -2685,7 +2682,7 @@ export class ChatView extends ItemView {
 
 		try {
 			const content = await this.app.vault.cachedRead(file);
-			const fm = this.parseFrontmatter(content);
+			const fm = parseFrontmatter(content);
 			if (fm.record_kind || fm.source_capture_id) {
 				const metaEl = previewEl.createDiv({ cls: 'mok-popover-meta' });
 				if (fm.record_kind) {
@@ -2782,7 +2779,17 @@ export class ChatView extends ItemView {
 	}
 
 	private clearChat() {
-		this.startNewConversation();
+		const tab = this.activeTab === 'agent' ? 'Agent' : 'Chat';
+		const msgs = this.activeTab === 'agent' ? this.agentMessages : this.messages;
+		if (msgs.length === 0) return;
+
+		const modal = new ConfirmModal(
+			this.app,
+			`Clear ${tab} history?`,
+			`This will delete all ${msgs.length} messages in the current ${tab} conversation. This cannot be undone.`,
+			() => this.startNewConversation()
+		);
+		modal.open();
 	}
 
 	private startNewConversation() {
@@ -2907,7 +2914,7 @@ export class ChatView extends ItemView {
 		}
 
 		const now = new Date();
-		const dateStr = now.toLocaleDateString('ko-KR', {
+		const dateStr = now.toLocaleString(undefined, {
 			year: 'numeric',
 			month: '2-digit',
 			day: '2-digit',
@@ -2951,7 +2958,8 @@ export class ChatView extends ItemView {
 			new Notice(`✅ Saved to ${file.path}`);
 			this.renderActiveTab();
 		} catch (error) {
-			new Notice('Failed to save workspace note.');
+			const detail = error instanceof Error ? error.message : String(error);
+			new Notice(`Failed to save workspace note: ${detail.slice(0, 150)}`, 8000);
 			console.error('Workspace save error:', error);
 		}
 	}
@@ -3020,7 +3028,8 @@ export class ChatView extends ItemView {
 			new Notice(`✅ Created new note: ${newFile.path}`);
 			this.renderActiveTab();
 		} catch (error) {
-			new Notice('Failed to create note. Please try again.');
+			const detail = error instanceof Error ? error.message : String(error);
+			new Notice(`Failed to create note: ${detail.slice(0, 150)}`, 8000);
 			console.error('Create note error:', error);
 		}
 	}
@@ -3039,5 +3048,40 @@ export class ChatView extends ItemView {
 		setTimeout(() => {
 			this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
 		}, 50);
+	}
+}
+
+class ConfirmModal extends Modal {
+	private title: string;
+	private body: string;
+	private onConfirm: () => void;
+
+	constructor(app: App, title: string, body: string, onConfirm: () => void) {
+		super(app);
+		this.title = title;
+		this.body = body;
+		this.onConfirm = onConfirm;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.createEl('h3', { text: this.title });
+		contentEl.createEl('p', { text: this.body });
+
+		const btnRow = contentEl.createDiv({ cls: 'modal-button-container' });
+		btnRow.createEl('button', { text: 'Cancel' })
+			.addEventListener('click', () => this.close());
+		const confirmBtn = btnRow.createEl('button', {
+			cls: 'mod-warning',
+			text: 'Clear'
+		});
+		confirmBtn.addEventListener('click', () => {
+			this.onConfirm();
+			this.close();
+		});
+	}
+
+	onClose() {
+		this.contentEl.empty();
 	}
 }
