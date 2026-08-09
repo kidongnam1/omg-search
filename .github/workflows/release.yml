@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -25,12 +26,28 @@ jobs:
           npm install --legacy-peer-deps
           npm run build
 
+      - name: Get version from manifest
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            version=$(jq -r '.version' manifest.json)
+            echo "tag=${version}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
-          gh release create "$tag" \
-            --title "Release $tag" \
-            --generate-notes \
-            main.js manifest.json styles.css
+          tag="${{ steps.version.outputs.tag }}"
+          if ! gh release view "$tag" > /dev/null 2>&1; then
+            gh release create "$tag" \
+              --title "Release $tag" \
+              --generate-notes \
+              --target "${{ github.sha }}" \
+              main.js manifest.json styles.css
+          else
+            echo "Release $tag already exists, updating assets..."
+            gh release upload "$tag" main.js manifest.json styles.css --clobber
+          fi
